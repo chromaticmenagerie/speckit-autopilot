@@ -1,5 +1,12 @@
 ---
-description: Launch autonomous epic lifecycle via shell orchestrator. Full autopilot by default.
+name: autopilot
+description: >
+  Launch speckit-autopilot autonomous epic lifecycle orchestrator.
+  Runs specify, clarify, plan, tasks, analyze, implement, review, merge,
+  crystallize, and finalize phases as fresh claude -p invocations.
+  Use for: running epics, monitoring progress, dry-run preview.
+argument-hint: "[epic-number] [--dry-run] [--no-auto-continue] [--silent]"
+disable-model-invocation: true
 ---
 
 ## User Input

@@ -70,9 +70,9 @@ assert "autopilot-lib.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash/aut
 assert "autopilot-stream.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash/autopilot-stream.sh' ]]"
 assert "autopilot-prompts.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash/autopilot-prompts.sh' ]]"
 assert "autopilot-detect-project.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash/autopilot-detect-project.sh' ]]"
-assert "skill file installed" "[[ -f '$TEST1_DIR/.claude/commands/autopilot.md' ]]"
+assert "skill file installed" "[[ -f '$TEST1_DIR/.claude/skills/autopilot/SKILL.md' ]]"
 assert "version marker written" "[[ -f '$TEST1_DIR/.specify/autopilot-version' ]]"
-assert "version is 0.1.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.1.0' ]]"
+assert "version is 0.2.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.2.0' ]]"
 assert "project.env generated" "[[ -f '$TEST1_DIR/.specify/project.env' ]]"
 assert "project.env has BASE_BRANCH" "grep -q 'BASE_BRANCH=' '$TEST1_DIR/.specify/project.env'"
 assert "scripts are executable" "[[ -x '$TEST1_DIR/.specify/scripts/bash/autopilot.sh' ]]"
@@ -96,7 +96,7 @@ echo "0.0.1" > "$TEST1_DIR/.specify/autopilot-version"
 OUTPUT3=$(cd "$TEST1_DIR" && bash "$REPO_ROOT/install.sh" 2>&1)
 
 assert "says upgrading" "echo '$OUTPUT3' | grep -q 'Upgrading'"
-assert "version updated to 0.1.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.1.0' ]]"
+assert "version updated to 0.2.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.2.0' ]]"
 
 # ─── Test 4: Fails without Spec Kit ─────────────────────────────────────────
 
@@ -136,6 +136,20 @@ echo 'PROJECT_TEST_CMD="custom test cmd"' > "$TEST1_DIR/.specify/project.env"
 
 PRESERVED_CMD=$(grep 'PROJECT_TEST_CMD' "$TEST1_DIR/.specify/project.env" || true)
 assert "project.env preserved" "echo '$PRESERVED_CMD' | grep -q 'custom test cmd'"
+
+# ─── Test 7: Legacy .claude/commands/ cleaned up on upgrade ──────────────────
+
+echo ""
+echo -e "${BOLD}Test 7: Legacy commands cleaned up on upgrade${RESET}"
+
+mkdir -p "$TEST1_DIR/.claude/commands"
+echo "old" > "$TEST1_DIR/.claude/commands/autopilot.md"
+echo "0.0.1" > "$TEST1_DIR/.specify/autopilot-version"
+
+(cd "$TEST1_DIR" && bash "$REPO_ROOT/install.sh") > /dev/null 2>&1
+
+assert "legacy command removed" "[[ ! -f '$TEST1_DIR/.claude/commands/autopilot.md' ]]"
+assert "skill in new location" "[[ -f '$TEST1_DIR/.claude/skills/autopilot/SKILL.md' ]]"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 

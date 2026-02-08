@@ -12,7 +12,7 @@ curl -sSL https://raw.githubusercontent.com/stephanvr/speckit-autopilot/main/ins
 
 The installer:
 - Copies 5 orchestrator scripts to `.specify/scripts/bash/`
-- Registers the `/autopilot` skill in `.claude/commands/`
+- Registers the `/autopilot` skill in `.claude/skills/autopilot/`
 - Auto-detects project tooling (Python, Node, Rust, Go) and writes `.specify/project.env`
 - Detects your base branch (main/master) for merge operations
 

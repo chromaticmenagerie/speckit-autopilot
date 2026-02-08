@@ -121,14 +121,21 @@ info "Scripts installed to $DEST/"
 
 # ─── Step 5: Install skill file ─────────────────────────────────────────────
 
-SKILL_DEST=".claude/commands"
+SKILL_DEST=".claude/skills/autopilot"
 mkdir -p "$SKILL_DEST"
 
-if [[ -f "$SRC_DIR/skill/autopilot.md" ]]; then
-    cp "$SRC_DIR/skill/autopilot.md" "$SKILL_DEST/autopilot.md"
+if [[ -f "$SRC_DIR/skill/autopilot/SKILL.md" ]]; then
+    cp "$SRC_DIR/skill/autopilot/SKILL.md" "$SKILL_DEST/SKILL.md"
     info "Skill registered: /autopilot (in $SKILL_DEST/)"
 else
     warn "Skill file not found in source (skipped)"
+fi
+
+# Remove legacy command if present (pre-v0.2.0)
+if [[ -f ".claude/commands/autopilot.md" ]]; then
+    rm -f ".claude/commands/autopilot.md"
+    rmdir ".claude/commands" 2>/dev/null || true
+    info "Cleaned up legacy .claude/commands/autopilot.md"
 fi
 
 # ─── Step 6: Write version marker ───────────────────────────────────────────
@@ -160,7 +167,7 @@ echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║${RESET}  ${GREEN}Autopilot v${NEW_VERSION} installed successfully${RESET}"
 echo -e "${BOLD}╠══════════════════════════════════════════════════════════╣${RESET}"
-echo -e "${BOLD}║${RESET}  Skill:  /autopilot (in .claude/commands/)"
+echo -e "${BOLD}║${RESET}  Skill:  /autopilot (in .claude/skills/autopilot/)"
 echo -e "${BOLD}║${RESET}  Config: .specify/project.env (review and adjust)"
 echo -e "${BOLD}║${RESET}"
 echo -e "${BOLD}║${RESET}  Next: Create epics in docs/specs/epics/"
