@@ -14,6 +14,11 @@
 #   ./autopilot.sh --silent     # Suppress live dashboard output
 #   ./autopilot.sh --no-auto-continue   # Pause between epics
 
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "ERROR: bash 4+ required (found $BASH_VERSION). Install via: brew install bash" >&2
+  exit 1
+fi
+
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -135,7 +140,7 @@ invoke_claude() {
     export REPO_ROOT
 
     local exit_code=0
-    claude -p "$prompt" \
+    env -u CLAUDECODE claude -p "$prompt" \
         --model "$model" \
         --allowedTools "$tools" \
         --output-format stream-json \
@@ -380,7 +385,7 @@ run_epic() {
                         log INFO "Branch mismatch: YAML=$short_name, actual=$actual_branch — correcting"
                         short_name="$actual_branch"
                         if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
-                            sed -i "s/^branch:.*/branch: $short_name/" "$epic_file"
+                            sed "s/^branch:.*/branch: $short_name/" "$epic_file" > "${epic_file}.tmp" && mv "${epic_file}.tmp" "$epic_file"
                             log INFO "Updated $(basename "$epic_file"): branch=$short_name"
                         fi
                     elif [[ -z "$short_name" ]]; then
@@ -402,7 +407,7 @@ run_epic() {
                             log INFO "Spec dir created: $short_name"
                             ensure_feature_branch "$repo_root" "$short_name"
                             if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
-                                sed -i "s/^branch:.*/branch: $short_name/" "$epic_file"
+                                sed "s/^branch:.*/branch: $short_name/" "$epic_file" > "${epic_file}.tmp" && mv "${epic_file}.tmp" "$epic_file"
                                 log INFO "Updated $(basename "$epic_file"): branch=$short_name"
                             fi
                         fi
