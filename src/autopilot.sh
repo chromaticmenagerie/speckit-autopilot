@@ -654,6 +654,7 @@ main() {
 
     log INFO "Autopilot started (auto-continue=$AUTO_CONTINUE, dry-run=$DRY_RUN, silent=$SILENT)"
     log INFO "Repository: $repo_root (base branch: $BASE_BRANCH)"
+    log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
     trap 'log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
