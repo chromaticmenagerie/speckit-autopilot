@@ -2,7 +2,7 @@
 # install.sh — Install speckit-autopilot into a Spec Kit project.
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/stephanvr/speckit-autopilot/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/chromaticmenagerie/speckit-autopilot/main/install.sh | bash
 #
 # Or from a local clone:
 #   ./install.sh
@@ -11,8 +11,8 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/stephanvr/speckit-autopilot"
-TARBALL_URL="https://github.com/stephanvr/speckit-autopilot/archive/refs/heads/main.tar.gz"
+REPO_URL="https://github.com/chromaticmenagerie/speckit-autopilot"
+TARBALL_URL="https://github.com/chromaticmenagerie/speckit-autopilot/archive/refs/heads/main.tar.gz"
 
 # ─── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -108,7 +108,7 @@ fi
 DEST=".specify/scripts/bash"
 mkdir -p "$DEST"
 
-for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh; do
+for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-coderabbit.sh autopilot-finalize.sh autopilot-watch.sh common.sh; do
     if [[ -f "$SRC_DIR/src/$script" ]]; then
         cp "$SRC_DIR/src/$script" "$DEST/$script"
         chmod +x "$DEST/$script"

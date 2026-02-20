@@ -25,6 +25,9 @@ SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/autopilot-lib.sh"
 source "$SCRIPT_DIR/autopilot-stream.sh"
 source "$SCRIPT_DIR/autopilot-prompts.sh"
+source "$SCRIPT_DIR/autopilot-github.sh"
+source "$SCRIPT_DIR/autopilot-coderabbit.sh"
+source "$SCRIPT_DIR/autopilot-finalize.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -37,6 +40,7 @@ declare -A PHASE_MODEL=(
     [clarify]="$OPUS"
     [clarify-verify]="$OPUS"
     [plan]="$OPUS"
+    [design-read]="$SONNET"
     [tasks]="$OPUS"
     [analyze]="$OPUS"
     [analyze-verify]="$OPUS"
@@ -45,6 +49,8 @@ declare -A PHASE_MODEL=(
     [crystallize]="$OPUS"
     [finalize-fix]="$OPUS"
     [finalize-review]="$OPUS"
+    [coderabbit-fix]="$OPUS"
+    [conflict-resolve]="$OPUS"
 )
 
 # Phase → allowed tools
@@ -53,6 +59,7 @@ declare -A PHASE_TOOLS=(
     [clarify]="Skill,Read,Write,Edit,Bash,Glob,Grep"
     [clarify-verify]="Read,Write,Edit,Bash,Glob,Grep"
     [plan]="Skill,Read,Write,Edit,Bash,Glob,Grep,WebSearch,WebFetch"
+    [design-read]="Read,Write,Glob,Grep"
     [tasks]="Skill,Read,Write,Edit,Glob,Grep"
     [analyze]="Skill,Read,Write,Edit,Bash,Glob,Grep"
     [analyze-verify]="Skill,Read,Write,Edit,Bash,Glob,Grep"
@@ -61,6 +68,8 @@ declare -A PHASE_TOOLS=(
     [crystallize]="Read,Write,Edit,Bash,Glob,Grep"
     [finalize-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [finalize-review]="Read,Write,Edit,Bash,Glob,Grep"
+    [coderabbit-fix]="Read,Write,Edit,Bash,Glob,Grep"
+    [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
 )
 
 # Phase → max retries (convergence phases get more attempts)
@@ -69,6 +78,7 @@ declare -A PHASE_MAX_RETRIES=(
     [clarify]=5
     [clarify-verify]=2
     [plan]=3
+    [design-read]=2
     [tasks]=3
     [analyze]=5
     [analyze-verify]=5
@@ -77,6 +87,8 @@ declare -A PHASE_MAX_RETRIES=(
     [crystallize]=1
     [finalize-fix]=3
     [finalize-review]=1
+    [coderabbit-fix]=3
+    [conflict-resolve]=3
 )
 
 # ─── Argument Parsing ────────────────────────────────────────────────────────
@@ -85,6 +97,8 @@ TARGET_EPIC=""
 AUTO_CONTINUE=true
 DRY_RUN=false
 SILENT=false
+NO_GITHUB=false
+GITHUB_RESYNC=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -92,6 +106,8 @@ parse_args() {
             --no-auto-continue) AUTO_CONTINUE=false ;;
             --dry-run)          DRY_RUN=true ;;
             --silent)           SILENT=true ;;
+            --no-github)        NO_GITHUB=true ;;
+            --github-resync)    GITHUB_RESYNC=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -100,6 +116,8 @@ parse_args() {
                 echo "  --no-auto-continue   Pause between epics instead of auto-continuing"
                 echo "  --dry-run            Show what would happen without invoking claude"
                 echo "  --silent             Suppress live dashboard output (files still written)"
+                echo "  --no-github          Disable GitHub Projects sync"
+                echo "  --github-resync      Resync all epics to GitHub Projects and exit"
                 exit 0
                 ;;
             [0-9][0-9][0-9])    TARGET_EPIC="$1" ;;
@@ -177,6 +195,15 @@ run_phase() {
             ;;
         plan)
             prompt="$(prompt_plan "$epic_num" "$title" "$repo_root")"
+            ;;
+        design-read)
+            local pen_file
+            pen_file="$(find_pen_file "$repo_root" "$epic_num")"
+            if [[ -z "$pen_file" ]]; then
+                log WARN "design-read: no .pen file found — skipping"
+                return 0
+            fi
+            prompt="$(prompt_design_read "$epic_num" "$title" "$repo_root" "$spec_dir" "$pen_file")"
             ;;
         tasks)
             prompt="$(prompt_tasks "$epic_num" "$title" "$repo_root")"
@@ -274,6 +301,8 @@ do_merge() {
     }
     log OK "Merged $short_name to $BASE_BRANCH"
 
+    gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md"
+
     # Auto-update epic YAML frontmatter
     if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
         mark_epic_merged "$epic_file" "$short_name"
@@ -328,6 +357,10 @@ run_epic() {
         state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
         log INFO "Detected state: $state"
 
+        local _tasks_file=""
+        [[ -n "$short_name" ]] && _tasks_file="$repo_root/specs/$short_name/tasks.md"
+        gh_sync_phase "$repo_root" "$epic_num" "$state" "$_tasks_file"
+
         if [[ "$state" == "done" ]]; then
             log OK "Epic $epic_num is complete and merged"
             return 0
@@ -353,7 +386,7 @@ run_epic() {
             _accumulate_phase_cost "$repo_root"
 
             # Merge gate
-            if ! do_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
+            if ! do_remote_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
                 return 1
             fi
 
@@ -421,6 +454,12 @@ run_epic() {
                 if [[ "$new_state" != "$prev_state" ]]; then
                     _accumulate_phase_cost "$repo_root"
                     log OK "Phase $prev_state → $new_state"
+
+                    # After tasks phase: create task issues
+                    if [[ "$prev_state" == "tasks" ]] && $GH_ENABLED; then
+                        local _tf="$repo_root/specs/$short_name/tasks.md"
+                        [[ -f "$_tf" ]] && gh_create_task_issues "$repo_root" "$epic_num" "$_tf"
+                    fi
                     break
                 else
                     retries=$((retries + 1))
@@ -454,6 +493,14 @@ run_epic() {
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance clarify-verify after ${retries} attempts" 2>/dev/null || true
                 _accumulate_phase_cost "$repo_root"
                 continue
+            elif [[ "$state" == "design-read" ]]; then
+                log WARN "Design-read: max $retries attempts — skipping design extraction"
+                echo "# Design Context: Skipped (extraction failed after $retries attempts)" \
+                    > "$spec_dir/design-context.md"
+                git -C "$repo_root" add "$spec_dir/design-context.md" && \
+                git -C "$repo_root" commit -m "chore(${epic_num}): skip design-read after ${retries} attempts" 2>/dev/null || true
+                _accumulate_phase_cost "$repo_root"
+                continue
             elif [[ "$state" == "analyze" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
                 log WARN "Analyze: max $retries rounds reached — forcing advance to implement"
                 echo -e "\n<!-- ANALYZED -->" >> "$spec_dir/tasks.md"
@@ -469,113 +516,7 @@ run_epic() {
     done
 }
 
-# ─── Finalize (all epics merged) ─────────────────────────────────────────────
-
-# Run finalize phase: test/lint → fix iteratively → cross-epic review → summary.
-# Called when all epics are merged. Operates on base branch.
-run_finalize() {
-    local repo_root="$1"
-
-    echo ""
-    echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${BOLD}║  FINALIZE: All Epics Merged — Integration Check        ║${RESET}"
-    echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
-    echo ""
-
-    # Ensure we're on base branch
-    local current_branch
-    current_branch=$(git -C "$repo_root" branch --show-current)
-    if [[ "$current_branch" != "$BASE_BRANCH" ]]; then
-        log INFO "Switching to $BASE_BRANCH for finalize"
-        git -C "$repo_root" checkout "$BASE_BRANCH"
-    fi
-
-    # ── Step 1: Iterative test/lint fix loop ──
-    local max_fix_rounds=3
-    local round=0
-    local tests_ok=false
-    local lint_ok=false
-
-    while [[ $round -lt $max_fix_rounds ]]; do
-        round=$((round + 1))
-        log INFO "Finalize fix round $round/$max_fix_rounds"
-
-        # Run tests
-        if verify_tests "$repo_root"; then
-            tests_ok=true
-        else
-            tests_ok=false
-        fi
-
-        # Run lint
-        if verify_lint "$repo_root"; then
-            lint_ok=true
-        else
-            lint_ok=false
-        fi
-
-        # If both pass, break
-        if $tests_ok && $lint_ok; then
-            log OK "Tests and lint pass on $BASE_BRANCH"
-            break
-        fi
-
-        # Invoke Claude Opus to fix failures
-        log PHASE "Invoking Opus to fix test/lint failures (round $round)"
-
-        local fix_prompt
-        fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "$LAST_LINT_OUTPUT")"
-
-        if $DRY_RUN; then
-            log INFO "[DRY RUN] Would invoke claude to fix test/lint failures"
-        else
-            invoke_claude "finalize-fix" "$fix_prompt" "FIN" "Fix test/lint failures" || {
-                log WARN "Finalize-fix invocation failed (round $round)"
-            }
-        fi
-    done
-
-    if ! $tests_ok; then
-        log ERROR "Finalize: tests still failing after $max_fix_rounds fix rounds"
-        return 1
-    fi
-
-    if ! $lint_ok; then
-        log WARN "Finalize: lint issues remain after $max_fix_rounds fix rounds (non-blocking)"
-    fi
-
-    # ── Step 2: Cross-epic integration review ──
-    log PHASE "Cross-epic integration review (Opus)"
-
-    local review_prompt
-    review_prompt="$(prompt_finalize_review "$repo_root")"
-
-    if $DRY_RUN; then
-        log INFO "[DRY RUN] Would invoke claude for cross-epic integration review"
-    else
-        invoke_claude "finalize-review" "$review_prompt" "FIN" "Cross-epic integration review" || {
-            log WARN "Finalize-review invocation failed (non-blocking)"
-        }
-
-        # Re-verify after review changes
-        if ! verify_tests "$repo_root"; then
-            log WARN "Tests broke during integration review — invoking fix"
-            local refix_prompt
-            refix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "$LAST_LINT_OUTPUT")"
-            invoke_claude "finalize-fix" "$refix_prompt" "FIN" "Post-review fix" || true
-            if ! verify_tests "$repo_root"; then
-                log ERROR "Finalize: tests fail after integration review fix attempt"
-                return 1
-            fi
-        fi
-    fi
-
-    # ── Step 3: Generate project summary ──
-    write_project_summary "$repo_root"
-
-    log OK "Finalize complete"
-    return 0
-}
+# run_finalize() is in autopilot-finalize.sh (sourced above)
 
 # ─── Entry Point ─────────────────────────────────────────────────────────────
 
@@ -594,11 +535,28 @@ main() {
     init_logging "$repo_root"
     load_project_config "$repo_root"
 
+    # GitHub Projects integration
+    gh_detect
+    if $GH_ENABLED; then
+        gh_ensure_project "$repo_root"
+    fi
+
+    # Handle --github-resync mode (exits after sync)
+    if $GITHUB_RESYNC; then
+        if ! $GH_ENABLED; then
+            log ERROR "GitHub sync unavailable — check gh auth"
+            exit 1
+        fi
+        gh_resync "$repo_root"
+        exit 0
+    fi
+
     # Base branch for merges (from project.env or fallback)
     BASE_BRANCH="${BASE_BRANCH:-master}"
 
     log INFO "Autopilot started (auto-continue=$AUTO_CONTINUE, dry-run=$DRY_RUN, silent=$SILENT)"
     log INFO "Repository: $repo_root (base branch: $BASE_BRANCH)"
+    log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
     trap 'log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
@@ -621,6 +579,10 @@ main() {
         # Parse epic info
         IFS='|' read -r epic_num short_name title epic_file <<< "$epic_info"
         log INFO "Next epic: $epic_num — $title"
+
+        if $GH_ENABLED; then
+            gh_create_epic_issue "$repo_root" "$epic_num" "$title"
+        fi
 
         # Run the epic lifecycle
         if ! run_epic "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then

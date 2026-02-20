@@ -5,7 +5,7 @@ Autonomous epic lifecycle orchestrator for [Spec Kit](https://github.com/speckit
 ## Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/stephanvr/speckit-autopilot/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/chromaticmenagerie/speckit-autopilot/main/install.sh | bash
 ```
 
 **Prerequisites**: Spec Kit must be installed first (`.specify/` directory).
