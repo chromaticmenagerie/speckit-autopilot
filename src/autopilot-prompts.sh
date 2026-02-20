@@ -227,6 +227,112 @@ If zero issues:
 EOF
 }
 
+# ─── Phase: Design Read (extract design context from .pen file) ──────────
+
+prompt_design_read() {
+    local epic_num="$1" title="$2" repo_root="$3" spec_dir="$4" pen_file="$5"
+    local spec_dir_name
+    spec_dir_name="$(basename "$spec_dir")"
+    cat <<'SCHEMA_EOF'
+── .pen Schema Reference ──
+Top-level keys: "version", "children" (array of root frames), "variables" (design tokens).
+6 node types: frame, text, icon_font, rectangle, ellipse, ref.
+- frame: container with optional layout ("vertical" = column, absent = row), gap, padding,
+  justifyContent, alignItems, fill, stroke, cornerRadius, effect. Has children array.
+- text: has content (string), fontSize, fontWeight, fontFamily, fill, textAlign, lineHeight.
+- icon_font: has iconFontName, iconFontFamily (e.g. "lucide"), width, height, fill.
+- rectangle: shape with fill, stroke, cornerRadius, width, height.
+- ellipse: circle/oval with fill, width, height.
+- ref: component instance — "ref" field points to id of a node with "reusable": true.
+Variables: top-level "variables" object maps "$--name" to {type, value}.
+  In node properties, "$--name" means resolve from variables map.
+  Types: "color", "string", "number".
+Reusable components: any node with "reusable": true is a component definition.
+Fill types: hex string ("#D4213D"), variable ref ("$--primary"),
+  gradient object ({type:"gradient", gradientType, rotation, colors:[]}),
+  image object ({type:"image", url, mode:"fill"|"fit"}).
+Layout maps to CSS flexbox: layout:"vertical" = flex-direction:column,
+  gap/padding/justifyContent/alignItems are direct CSS equivalents.
+Sizing: number = px, "fill_container" = flex:1, "fit_content(N)" = shrink-wrap with min N.
+SCHEMA_EOF
+    cat <<EOF
+
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+Read the design file at: ${pen_file}
+Also read the spec at: ${spec_dir}/spec.md
+
+The .pen file is plain JSON (Pencil format). Use the schema reference above to parse it.
+
+── Extraction Instructions ──
+Extract and organize the following from the .pen JSON:
+
+1. SCREEN INVENTORY: All top-level frames (direct children of root "children" array).
+   For each: name, width, height, viewport type (Desktop if width>=1024,
+   Tablet if 768-1023, Mobile if <768, or infer from name prefixes like "Mobile /").
+
+2. DESIGN TOKENS: All entries from the top-level "variables" object.
+   For each: token name (strip \$ prefix), type, value, CSS equivalent hint.
+
+3. REUSABLE COMPONENTS: All nodes where "reusable" is true.
+   For each: id, name, dimensions, key visual properties (fill, cornerRadius, etc.),
+   and a brief description of children structure (2-3 lines max).
+
+4. COMPONENT INSTANCES: All "ref" nodes found throughout the tree.
+   For each: which component they reference, which screen they appear in, any overrides.
+
+5. LAYOUT PATTERNS: Identify recurring layout structures across screens.
+   Note flexDirection, gap, padding, justifyContent, alignItems values.
+   Examples: centered card, sidebar+content, card grid, form stack, nav patterns.
+
+6. SCREEN-TO-REQUIREMENT MAPPING: Cross-reference screen names with requirements
+   and user stories in spec.md. Map each screen to relevant functional requirements.
+
+── Output ──
+Write the extracted context to: ${spec_dir}/design-context.md
+
+Use this structure:
+
+# Design Context: Epic ${epic_num} — ${title}
+
+## Screens
+| Screen | Viewport | Dimensions | Description |
+|--------|----------|------------|-------------|
+
+## Design Tokens
+| Token | Type | Value | CSS Equivalent |
+|-------|------|-------|---------------|
+
+## Reusable Components
+### ComponentName (id: xxx)
+- Dimensions: WxH
+- Key properties: fill, cornerRadius, etc.
+- Children: [brief structural description]
+
+## Component Instance Map
+| Instance Location | Component | Overrides |
+|-------------------|-----------|-----------|
+
+## Screen-to-Requirement Mapping
+| Screen | Requirement | Acceptance Criteria |
+|--------|-------------|-------------------|
+
+## Layout Patterns
+- Pattern name: description with key CSS/flex properties
+
+## Implementation Notes
+- Icon library and family used
+- Responsive breakpoints detected
+- Typography scale (font sizes, weights, families)
+- Color palette summary (from tokens)
+- Any other notable patterns
+
+After writing design-context.md, commit:
+  git add specs/${spec_dir_name}/design-context.md
+  git commit -m "docs(${epic_num}): extract design context from .pen file"
+EOF
+}
+
 # ─── Phase: Implement (via /speckit.implement with subagent parallelism) ────
 
 prompt_implement() {
@@ -235,12 +341,20 @@ prompt_implement() {
 $(_preamble "$epic_num" "$title" "$repo_root")
 
 Read ALL design artifacts in ${spec_dir}/ to understand the full scope.
+If ${spec_dir}/design-context.md exists, read it. It is the authoritative visual specification:
+- Match design tokens EXACTLY — map to CSS custom properties or Tailwind config
+- Implement ALL screens listed in the screen inventory
+- Use the reusable components catalogue as your component decomposition guide
+- Follow the layout patterns precisely (flex directions, gaps, padding, alignment)
+- Use the specified icon library (check Implementation Notes section)
 Also read CLAUDE.md for project conventions, reusable utilities, and patterns.
 
 When launching Task subagents for parallel [P] tasks, include this instruction
 in each subagent prompt:
   "Before writing code, read .specify/memory/architecture.md for module
-  dependencies and CLAUDE.md for reusable utilities and patterns."
+  dependencies and CLAUDE.md for reusable utilities and patterns.
+  If specs/{name}/design-context.md exists, also read it for design token
+  values, component structure, and layout specifications."
 
 Then invoke the Skill tool:
   skill = "speckit.implement"
@@ -282,6 +396,12 @@ All implementation tasks are complete. Perform a senior code review.
    - Observability (structured logging per constitution principles)
    - No hardcoded paths or credentials
    - No print() / console.log debug output (use proper logging)
+   - Design fidelity (if specs/${short_name}/design-context.md exists):
+     * All design tokens mapped to CSS variables or Tailwind theme
+     * All screens from the screen inventory are implemented
+     * Component decomposition matches the reusable components catalogue
+     * Layout patterns match design specifications (flex, gap, padding, alignment)
+     * Icon library matches Implementation Notes
 
 3. Fix any issues found. Commit fixes:
    git add <specific files>

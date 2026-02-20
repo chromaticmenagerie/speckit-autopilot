@@ -98,6 +98,16 @@ list_epics() {
     done
 }
 
+# Find a .pen design file for the given epic number.
+# Searches docs/specs/epics/ for epic-NNN-*.pen (co-located with epic MDs).
+# Output: absolute path to .pen file, or empty if none found.
+find_pen_file() {
+    local repo_root="$1" epic_num="$2"
+    for f in "$repo_root/docs/specs/epics"/epic-"${epic_num}"-*.pen; do
+        [[ -f "$f" ]] && echo "$f" && return
+    done
+}
+
 # Check if an epic has been merged to the base branch.
 # Accepts status from YAML as primary signal, falls back to git log.
 is_epic_merged() {
@@ -155,7 +165,7 @@ find_next_epic() {
 # ─── State Detection ────────────────────────────────────────────────────────
 
 # Detect the current lifecycle phase for an epic. Pure filesystem checks.
-# Output: one of: specify, clarify, plan, tasks, analyze, implement, review, done
+# Output: one of: specify, clarify, plan, design-read, tasks, analyze, implement, review, done
 # Note: clarify and analyze are iterative — they loop until convergence markers
 # (<!-- CLARIFY_COMPLETE --> and <!-- ANALYZED -->) are present.
 detect_state() {
@@ -188,8 +198,21 @@ detect_state() {
         return
     fi
 
-    # No tasks → need to generate tasks
+    # No tasks → check if design extraction is needed first
     if [[ ! -f "$spec_dir/tasks.md" ]]; then
+        local pen_file
+        pen_file="$(find_pen_file "$repo_root" "$epic_num")"
+        if [[ -n "$pen_file" ]]; then
+            if [[ ! -f "$spec_dir/design-context.md" ]]; then
+                echo "design-read"
+                return
+            fi
+            # Re-extract if .pen is newer than design-context.md
+            if [[ "$pen_file" -nt "$spec_dir/design-context.md" ]]; then
+                echo "design-read"
+                return
+            fi
+        fi
         echo "tasks"
         return
     fi

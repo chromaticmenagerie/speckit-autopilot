@@ -37,6 +37,7 @@ declare -A PHASE_MODEL=(
     [clarify]="$OPUS"
     [clarify-verify]="$OPUS"
     [plan]="$OPUS"
+    [design-read]="$SONNET"
     [tasks]="$OPUS"
     [analyze]="$OPUS"
     [analyze-verify]="$OPUS"
@@ -53,6 +54,7 @@ declare -A PHASE_TOOLS=(
     [clarify]="Skill,Read,Write,Edit,Bash,Glob,Grep"
     [clarify-verify]="Read,Write,Edit,Bash,Glob,Grep"
     [plan]="Skill,Read,Write,Edit,Bash,Glob,Grep,WebSearch,WebFetch"
+    [design-read]="Read,Write,Glob,Grep"
     [tasks]="Skill,Read,Write,Edit,Glob,Grep"
     [analyze]="Skill,Read,Write,Edit,Bash,Glob,Grep"
     [analyze-verify]="Skill,Read,Write,Edit,Bash,Glob,Grep"
@@ -69,6 +71,7 @@ declare -A PHASE_MAX_RETRIES=(
     [clarify]=5
     [clarify-verify]=2
     [plan]=3
+    [design-read]=2
     [tasks]=3
     [analyze]=5
     [analyze-verify]=5
@@ -177,6 +180,15 @@ run_phase() {
             ;;
         plan)
             prompt="$(prompt_plan "$epic_num" "$title" "$repo_root")"
+            ;;
+        design-read)
+            local pen_file
+            pen_file="$(find_pen_file "$repo_root" "$epic_num")"
+            if [[ -z "$pen_file" ]]; then
+                log WARN "design-read: no .pen file found — skipping"
+                return 0
+            fi
+            prompt="$(prompt_design_read "$epic_num" "$title" "$repo_root" "$spec_dir" "$pen_file")"
             ;;
         tasks)
             prompt="$(prompt_tasks "$epic_num" "$title" "$repo_root")"
@@ -452,6 +464,14 @@ run_epic() {
                 echo -e "\n<!-- CLARIFY_VERIFIED -->" >> "$spec_dir/spec.md"
                 git -C "$repo_root" add "$spec_dir/spec.md" && \
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance clarify-verify after ${retries} attempts" 2>/dev/null || true
+                _accumulate_phase_cost "$repo_root"
+                continue
+            elif [[ "$state" == "design-read" ]]; then
+                log WARN "Design-read: max $retries attempts — skipping design extraction"
+                echo "# Design Context: Skipped (extraction failed after $retries attempts)" \
+                    > "$spec_dir/design-context.md"
+                git -C "$repo_root" add "$spec_dir/design-context.md" && \
+                git -C "$repo_root" commit -m "chore(${epic_num}): skip design-read after ${retries} attempts" 2>/dev/null || true
                 _accumulate_phase_cost "$repo_root"
                 continue
             elif [[ "$state" == "analyze" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
