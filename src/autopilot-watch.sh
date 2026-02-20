@@ -103,6 +103,7 @@ find_repo_root() {
 }
 
 cleanup() {
+    stty echo 2>/dev/null
     [[ "$ALT_SCREEN_ACTIVE" == true ]] && { safe_tput rmcup; ALT_SCREEN_ACTIVE=false; }
     safe_tput cnorm
 }
@@ -179,7 +180,7 @@ read_recent_activity() {
     parsed=$(tail -200 "$EVENTS_FILE" 2>/dev/null \
         | grep '"tool_use"' \
         | tail -10 \
-        | jq -r '[.ts // "", .tool // "", .target // ""] | join("\t")' 2>/dev/null) || return 0
+        | jq -r '[.ts // "", .tool // "", (.target // "" | gsub("\n"; " "))] | join("\t")' 2>/dev/null) || return 0
 
     while IFS=$'\t' read -r ts tool target; do
         [[ -z "$ts" ]] && continue
@@ -448,12 +449,13 @@ main() {
     fi
     find_repo_root; resize
     safe_tput smcup; ALT_SCREEN_ACTIVE=true; safe_tput civis
+    stty -echo 2>/dev/null
     trap cleanup EXIT INT TERM
     trap resize WINCH
     while true; do
         render_frame
         SPIN_IDX=$(( (SPIN_IDX + 1) % ${#SPINNER_CHARS[@]} ))
-        sleep "$POLL_INTERVAL"
+        read -s -t 1 -n 1024 discard 2>/dev/null || true
     done
 }
 

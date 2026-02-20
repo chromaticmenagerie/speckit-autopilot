@@ -119,7 +119,7 @@ _process_assistant_event() {
             .input.description //
             .input.skill //
             .input.prompt //
-            ""' | head -c 200)
+            ""' | tr '\n' ' ' | head -c 200)
 
         _emit_event "$events_log" "tool_use" \
             "$(jq -nc --arg t "$tool_name" --arg tgt "$target" '{tool:$t, target:$tgt}')"
