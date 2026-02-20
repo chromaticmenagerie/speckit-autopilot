@@ -103,7 +103,7 @@ list_epics() {
 # Output: absolute path to .pen file, or empty if none found.
 find_pen_file() {
     local repo_root="$1" epic_num="$2"
-    for f in "$repo_root/docs/specs/epics"/epic-"${epic_num}"-*.pen; do
+    for f in "${repo_root}/docs/specs/epics/epic-${epic_num}"-*.pen; do
         [[ -f "$f" ]] && echo "$f" && return
     done
 }
