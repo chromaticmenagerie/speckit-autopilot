@@ -94,7 +94,11 @@ detect_makefile() {
         grep -q "^test:" "$REPO_ROOT/Makefile" && TEST_CMD="make test"
         grep -q "^lint:" "$REPO_ROOT/Makefile" && LINT_CMD="make lint"
         grep -q "^build:" "$REPO_ROOT/Makefile" && BUILD_CMD="make build"
-        grep -q "^fmt\|^format:" "$REPO_ROOT/Makefile" && FORMAT_CMD="make fmt"
+        if grep -q "^fmt:" "$REPO_ROOT/Makefile"; then
+            FORMAT_CMD="make fmt"
+        elif grep -q "^format:" "$REPO_ROOT/Makefile"; then
+            FORMAT_CMD="make format"
+        fi
         return 0
     fi
     return 1
