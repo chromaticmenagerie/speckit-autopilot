@@ -107,7 +107,10 @@ cleanup() {
     safe_tput cnorm
 }
 
-resize() { TERM_ROWS=$(safe_tput lines || echo 24); TERM_COLS=$(safe_tput cols || echo 80); }
+resize() {
+    TERM_ROWS=$(tput lines 2>/dev/null) || TERM_ROWS=24
+    TERM_COLS=$(tput cols 2>/dev/null) || TERM_COLS=80
+}
 
 read_status() {
     [[ ! -f "$STATUS_FILE" ]] && { STATUS_EPIC=""; STATUS_PID=""; return 1; }
