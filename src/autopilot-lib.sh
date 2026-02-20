@@ -315,8 +315,8 @@ mark_epic_merged() {
 
     [[ ! -f "$epic_file" ]] && return 1
 
-    sed -i "s/^status: .*/status: merged/" "$epic_file"
-    sed -i "s/^branch:.*/branch: $short_name/" "$epic_file"
+    sed "s/^status: .*/status: merged/" "$epic_file" > "${epic_file}.tmp" && mv "${epic_file}.tmp" "$epic_file"
+    sed "s/^branch:.*/branch: $short_name/" "$epic_file" > "${epic_file}.tmp" && mv "${epic_file}.tmp" "$epic_file"
 
     log INFO "Updated $(basename "$epic_file"): status=merged, branch=$short_name"
 }
@@ -506,8 +506,10 @@ write_project_summary() {
         [[ ! -f "$sf" ]] && continue
         local epic_name cost files
         epic_name=$(head -1 "$sf" | sed 's/^# //')
-        cost=$(grep -oP '\*\*Total cost\*\*.*?\$\K[0-9.]+' "$sf" 2>/dev/null || echo "0")
-        files=$(grep -oP '\*\*Files changed\*\*:\s*\K[0-9]+' "$sf" 2>/dev/null || echo "0")
+        cost=$(grep -o '\*\*Total cost\*\*[^$]*\$[0-9.]*' "$sf" 2>/dev/null | grep -o '[0-9.]*$' || echo "0")
+        cost="${cost:-0}"
+        files=$(grep -o '\*\*Files changed\*\*:[[:space:]]*[0-9]*' "$sf" 2>/dev/null | grep -o '[0-9]*$' || echo "0")
+        files="${files:-0}"
         total_cost=$(echo "$total_cost $cost" | awk '{printf "%.2f", $1 + $2}')
         total_files=$((total_files + files))
         epic_table+="| $epic_name | $files | \$$cost |"$'\n'

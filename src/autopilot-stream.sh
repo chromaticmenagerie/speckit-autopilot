@@ -127,7 +127,7 @@ _process_assistant_event() {
         _last_tool="$tool_name ${target:0:80}"
         _update_status "$status_file" "$epic" "$phase"
 
-        if ! ${SILENT:-false}; then
+        if [[ "${SILENT:-false}" != "true" ]]; then
             printf "  ${DIM}%s${RESET}  ${BOLD}%s${RESET} — %s\n" \
                 "$(date +%H:%M:%S)" "$tool_name" "${target:0:60}"
         fi
@@ -156,7 +156,7 @@ _process_tool_result() {
         _emit_event "$events_log" "tool_error" \
             "$(jq -nc --arg out "$truncated_output" '{output:$out}')"
 
-        if ! ${SILENT:-false}; then
+        if [[ "${SILENT:-false}" != "true" ]]; then
             printf "  ${DIM}%s${RESET}  ${RED}ERROR${RESET} — %s\n" \
                 "$(date +%H:%M:%S)" "${truncated_output:0:60}"
         fi
@@ -184,7 +184,7 @@ _process_result() {
     echo "$result_text" > "$phase_log"
     _update_status "$status_file" "$epic" "$phase"
 
-    if ! ${SILENT:-false}; then
+    if [[ "${SILENT:-false}" != "true" ]]; then
         local dur_min
         dur_min=$(echo "$duration" | awk '{printf "%.1f", $1/60000}')
         printf "\n  ${GREEN}${BOLD}Phase %s complete${RESET} — %sm, \$%.4f (%dk in / %dk out)\n\n" \
@@ -210,7 +210,7 @@ _get_impl_progress() {
     fi
 
     local current_mtime
-    current_mtime=$(stat -c %Y "$tasks_file" 2>/dev/null || echo 0)
+    current_mtime=$(stat -c %Y "$tasks_file" 2>/dev/null || stat -f %m "$tasks_file" 2>/dev/null || echo 0)
 
     if [[ "$current_mtime" != "$_impl_tasks_mtime" ]]; then
         _impl_tasks_mtime="$current_mtime"
@@ -265,7 +265,7 @@ _update_status() {
 
 _print_dashboard_header() {
     local epic="$1" title="$2" phase="$3" model="$4"
-    ${SILENT:-false} && return 0
+    [[ "${SILENT:-false}" == "true" ]] && return 0
     echo ""
     printf "  ${BOLD}╔══════════════════════════════════════════════════════╗${RESET}\n"
     printf "  ${BOLD}║${RESET}  Epic %s: %s\n" "$epic" "$title"
