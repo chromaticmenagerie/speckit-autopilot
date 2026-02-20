@@ -108,7 +108,7 @@ fi
 DEST=".specify/scripts/bash"
 mkdir -p "$DEST"
 
-for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh; do
+for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh; do
     if [[ -f "$SRC_DIR/src/$script" ]]; then
         cp "$SRC_DIR/src/$script" "$DEST/$script"
         chmod +x "$DEST/$script"
