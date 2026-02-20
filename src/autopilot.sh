@@ -538,7 +538,7 @@ main() {
     # GitHub Projects integration
     gh_detect
     if $GH_ENABLED; then
-        gh_ensure_project "$repo_root"
+        gh_ensure_project "$repo_root" || true
     fi
 
     # Handle --github-resync mode (exits after sync)
