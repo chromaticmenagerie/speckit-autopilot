@@ -394,6 +394,8 @@ write_epic_summary() {
 **Branch**: $short_name
 **Files changed**: $files_changed
 **Total cost**: \$$epic_total_cost
+$(if [[ -n "${LAST_PR_NUMBER:-}" ]]; then echo "**PR**: #$LAST_PR_NUMBER"; fi)
+$(if [[ -n "${LAST_CR_STATUS:-}" ]]; then echo "**CodeRabbit**: $LAST_CR_STATUS"; fi)
 
 ## Tests
 
@@ -529,7 +531,7 @@ write_project_summary() {
         [[ ! -f "$sf" ]] && continue
         local epic_name cost files
         epic_name=$(head -1 "$sf" | sed 's/^# //')
-        cost=$(grep -o '\*\*Total cost\*\*[^$]*\$[0-9.]*' "$sf" 2>/dev/null | grep -o '[0-9.]*$' || echo "0")
+        cost=$(grep -o '\*\*Total cost\*\*.*\$[0-9.]*' "$sf" 2>/dev/null | grep -o '[0-9.]*$' || echo "0")
         cost="${cost:-0}"
         files=$(grep -o '\*\*Files changed\*\*:[[:space:]]*[0-9]*' "$sf" 2>/dev/null | grep -o '[0-9]*$' || echo "0")
         files="${files:-0}"

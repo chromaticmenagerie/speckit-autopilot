@@ -551,3 +551,65 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   ${PROJECT_LINT_CMD}"; fi)
     - Any remaining concerns or technical debt
 EOF
 }
+
+# ─── Phase: CodeRabbit Fix (resolve CodeRabbit review findings) ─────────────
+
+prompt_coderabbit_fix() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" review_output="$5"
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+CodeRabbit has reviewed changes on branch ${short_name} and found issues.
+Fix ALL issues identified below, then verify.
+
+CODERABBIT REVIEW OUTPUT:
+\`\`\`
+${review_output}
+\`\`\`
+
+Instructions:
+1. Read each issue carefully — understand the file and line referenced.
+2. Read the relevant source files.
+3. Fix every issue. Prioritize:
+   - Security issues (CRITICAL)
+   - Logic bugs (HIGH)
+   - Best practice violations (MEDIUM)
+   - Style/convention issues (LOW)
+4. After fixing, verify:
+$(if [[ -n "\$PROJECT_TEST_CMD" ]]; then echo "   cd \${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_TEST_CMD}"; fi)
+$(if [[ -n "\$PROJECT_LINT_CMD" ]]; then echo "   cd \${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_LINT_CMD}"; fi)
+5. Commit all fixes:
+   git add <specific files>
+   git commit -m "fix(${epic_num}): resolve CodeRabbit review findings"
+6. Verify clean working tree: git status
+EOF
+}
+
+# ─── Phase: Conflict Resolution (rebase conflicts) ──────────────────────────
+
+prompt_conflict_resolve() {
+    local epic_num="$1" title="$2" repo_root="$3" conflict_files="$4"
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+A rebase onto origin/${BASE_BRANCH} has produced merge conflicts.
+Resolve ALL conflicts, preserving the intent of this epic's changes.
+
+CONFLICTING FILES:
+${conflict_files}
+
+Instructions:
+1. For each conflicting file, read it and understand both sides:
+   - OURS (the feature branch changes for epic ${epic_num})
+   - THEIRS (the base branch updates)
+2. Resolve by:
+   - Keeping our feature changes where they don't conflict with base updates
+   - Integrating base updates that our code must respect
+   - Removing ALL conflict markers (<<<<<<, ======, >>>>>>)
+3. After resolving each file:
+   git add <resolved file>
+4. Do NOT run git rebase --continue — the orchestrator handles that.
+5. Verify no conflict markers remain:
+   grep -rn '<<<<<<' . --include='*.py' --include='*.ts' --include='*.js' --include='*.sh' --include='*.go' --include='*.rs' || echo "No conflict markers found"
+EOF
+}
