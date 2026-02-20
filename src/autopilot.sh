@@ -25,6 +25,7 @@ SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/autopilot-lib.sh"
 source "$SCRIPT_DIR/autopilot-stream.sh"
 source "$SCRIPT_DIR/autopilot-prompts.sh"
+source "$SCRIPT_DIR/autopilot-github.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -88,6 +89,8 @@ TARGET_EPIC=""
 AUTO_CONTINUE=true
 DRY_RUN=false
 SILENT=false
+NO_GITHUB=false
+GITHUB_RESYNC=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -95,6 +98,8 @@ parse_args() {
             --no-auto-continue) AUTO_CONTINUE=false ;;
             --dry-run)          DRY_RUN=true ;;
             --silent)           SILENT=true ;;
+            --no-github)        NO_GITHUB=true ;;
+            --github-resync)    GITHUB_RESYNC=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -103,6 +108,8 @@ parse_args() {
                 echo "  --no-auto-continue   Pause between epics instead of auto-continuing"
                 echo "  --dry-run            Show what would happen without invoking claude"
                 echo "  --silent             Suppress live dashboard output (files still written)"
+                echo "  --no-github          Disable GitHub Projects sync"
+                echo "  --github-resync      Resync all epics to GitHub Projects and exit"
                 exit 0
                 ;;
             [0-9][0-9][0-9])    TARGET_EPIC="$1" ;;
@@ -286,6 +293,8 @@ do_merge() {
     }
     log OK "Merged $short_name to $BASE_BRANCH"
 
+    gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md"
+
     # Auto-update epic YAML frontmatter
     if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
         mark_epic_merged "$epic_file" "$short_name"
@@ -339,6 +348,10 @@ run_epic() {
     while true; do
         state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
         log INFO "Detected state: $state"
+
+        local _tasks_file=""
+        [[ -n "$short_name" ]] && _tasks_file="$repo_root/specs/$short_name/tasks.md"
+        gh_sync_phase "$repo_root" "$epic_num" "$state" "$_tasks_file"
 
         if [[ "$state" == "done" ]]; then
             log OK "Epic $epic_num is complete and merged"
@@ -433,6 +446,12 @@ run_epic() {
                 if [[ "$new_state" != "$prev_state" ]]; then
                     _accumulate_phase_cost "$repo_root"
                     log OK "Phase $prev_state → $new_state"
+
+                    # After tasks phase: create task issues
+                    if [[ "$prev_state" == "tasks" ]] && $GH_ENABLED; then
+                        local _tf="$repo_root/specs/$short_name/tasks.md"
+                        [[ -f "$_tf" ]] && gh_create_task_issues "$repo_root" "$epic_num" "$_tf"
+                    fi
                     break
                 else
                     retries=$((retries + 1))
@@ -614,6 +633,22 @@ main() {
     init_logging "$repo_root"
     load_project_config "$repo_root"
 
+    # GitHub Projects integration
+    gh_detect
+    if $GH_ENABLED; then
+        gh_ensure_project "$repo_root"
+    fi
+
+    # Handle --github-resync mode (exits after sync)
+    if $GITHUB_RESYNC; then
+        if ! $GH_ENABLED; then
+            log ERROR "GitHub sync unavailable — check gh auth"
+            exit 1
+        fi
+        gh_resync "$repo_root"
+        exit 0
+    fi
+
     # Base branch for merges (from project.env or fallback)
     BASE_BRANCH="${BASE_BRANCH:-master}"
 
@@ -641,6 +676,10 @@ main() {
         # Parse epic info
         IFS='|' read -r epic_num short_name title epic_file <<< "$epic_info"
         log INFO "Next epic: $epic_num — $title"
+
+        if $GH_ENABLED; then
+            gh_create_epic_issue "$repo_root" "$epic_num" "$title"
+        fi
 
         # Run the epic lifecycle
         if ! run_epic "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
