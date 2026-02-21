@@ -46,6 +46,9 @@ process_stream() {
         "$(jq -nc --arg e "$epic" --arg p "$phase" --arg m "${PHASE_MODEL[$phase]:-unknown}" \
         '{epic:$e, phase:$p, model:$m}')"
 
+    # Eager status write before blocking on NDJSON
+    _update_status "$status_file" "$epic" "$phase"
+
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         local event_type

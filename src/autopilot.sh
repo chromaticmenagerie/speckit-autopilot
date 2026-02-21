@@ -344,6 +344,17 @@ run_epic() {
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 
+    # Eager status write so watch dashboard picks up the new epic immediately
+    local _status_file="$repo_root/.specify/logs/autopilot-status.json"
+    mkdir -p "$(dirname "$_status_file")"
+    jq -nc \
+        --arg e "$epic_num" \
+        --arg p "initializing" \
+        --arg m "" \
+        --arg t "$title" \
+        '{epic:$e, phase:$p, model:$m, title:$t, cost_usd:0, tokens_in:0, tokens_out:0, iteration:0}' \
+        > "$_status_file"
+
     # Ensure correct branch (skip for specify — it creates the branch)
     local state
     state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
