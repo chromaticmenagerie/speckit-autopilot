@@ -85,19 +85,15 @@ gh_detect() {
 
 # ─── Phase Mapping ──────────────────────────────────────────────────────────
 
-# Maps internal phase names to the 10 board column statuses.
+# Maps internal phase names to GitHub's 3 default board statuses.
 _gh_phase_to_status() {
     case "$1" in
-        specify)                         echo "Specify" ;;
-        clarify|clarify-verify)          echo "Clarify" ;;
-        plan)                            echo "Plan" ;;
-        tasks)                           echo "Tasks" ;;
-        analyze|analyze-verify)          echo "Analyze" ;;
-        implement)                       echo "Implement" ;;
-        review|finalize-fix|finalize-review) echo "Review" ;;
-        crystallize)                     echo "Merged" ;;
-        done)                            echo "Done" ;;
-        *)                               echo "Backlog" ;;
+        implement|review|finalize-fix|finalize-review|crystallize)
+            echo "In Progress" ;;
+        done)
+            echo "Done" ;;
+        *)
+            echo "Todo" ;;
     esac
 }
 
@@ -122,12 +118,22 @@ _gh_load_cache() {
     # shellcheck disable=SC1090
     source "$env_file"
 
-    # Rebuild associative array from GH_STATUS_OPT_* vars
+    # Rebuild associative array from GH_STATUS_OPT_* vars (underscores → spaces)
     local var
     for var in $(compgen -v GH_STATUS_OPT_); do
-        local status_name="${var#GH_STATUS_OPT_}"
+        local safe_name="${var#GH_STATUS_OPT_}"
+        local status_name="${safe_name//_/ }"
         GH_STATUS_OPT["$status_name"]="${!var}"
     done
+
+    # Invalidate cache if required statuses missing
+    if [[ -z "${GH_STATUS_OPT[Todo]:-}" ]] || \
+       [[ -z "${GH_STATUS_OPT[In Progress]:-}" ]] || \
+       [[ -z "${GH_STATUS_OPT[Done]:-}" ]]; then
+        log WARN "Cache missing required status options — invalidating"
+        GH_STATUS_OPT=()
+        return 1
+    fi
     return 0
 }
 
@@ -143,7 +149,8 @@ _gh_write_cache() {
         echo "GH_OWNER=\"$GH_OWNER\""
         echo "GH_OWNER_REPO=\"$GH_OWNER_REPO\""
         for status_name in "${!GH_STATUS_OPT[@]}"; do
-            echo "GH_STATUS_OPT_${status_name}=\"${GH_STATUS_OPT[$status_name]}\""
+            local safe_name="${status_name// /_}"
+            echo "GH_STATUS_OPT_${safe_name}=\"${GH_STATUS_OPT[$status_name]}\""
         done
     } > "$env_file"
 }
@@ -205,55 +212,75 @@ gh_ensure_project() {
     gh label create "autopilot:epic" --repo "$GH_OWNER_REPO" --color "0052CC" --description "Autopilot epic" 2>/dev/null || true
     gh label create "autopilot:task" --repo "$GH_OWNER_REPO" --color "5319E7" --description "Autopilot task" 2>/dev/null || true
 
-    # Set up Status field — check if existing one already has our options
+    # ── Status field setup ──────────────────────────────────────────────────
     local fields_json
     fields_json=$(gh_try "list fields" gh project field-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json) || {
-        GH_ENABLED=false
-        return 1
+        GH_ENABLED=false; return 1
     }
 
-    local expected_options="Backlog,Specify,Clarify,Plan,Tasks,Analyze,Implement,Review,Merged,Done"
     local existing_status_id
     existing_status_id=$(echo "$fields_json" | jq -r '.fields[] | select(.name == "Status") | .id' 2>/dev/null | head -1)
 
-    local needs_recreate=true
     if [[ -n "$existing_status_id" ]] && [[ "$existing_status_id" != "null" ]]; then
-        # Check if existing Status field already has our exact options
-        local existing_options
-        existing_options=$(echo "$fields_json" | jq -r \
-            '[.fields[] | select(.name == "Status") | .options[].name] | join(",")' 2>/dev/null)
-        if [[ "$existing_options" == "$expected_options" ]]; then
-            needs_recreate=false
-            log INFO "Status field already configured with correct options"
+        # Status field exists — check for required options
+        local has_todo has_inprog has_done
+        has_todo=$(echo "$fields_json" | jq -r '[.fields[] | select(.name == "Status") | .options[].name] | index("Todo") // empty' 2>/dev/null)
+        has_inprog=$(echo "$fields_json" | jq -r '[.fields[] | select(.name == "Status") | .options[].name] | index("In Progress") // empty' 2>/dev/null)
+        has_done=$(echo "$fields_json" | jq -r '[.fields[] | select(.name == "Status") | .options[].name] | index("Done") // empty' 2>/dev/null)
+
+        if [[ -n "$has_todo" ]] && [[ -n "$has_inprog" ]] && [[ -n "$has_done" ]]; then
+            log INFO "Status field has required options (Todo, In Progress, Done)"
         else
-            gh_try "delete mismatched Status field" gh project field-delete --id "$existing_status_id" || true
+            # Options don't match — create a new autopilot-specific project
+            log WARN "Project #$GH_PROJECT_NUM Status field missing required options — creating new autopilot project"
+
+            local create_out
+            create_out=$(gh_try "create new project" gh project create --owner "$GH_OWNER" --title "$project_title" --format json) || {
+                GH_ENABLED=false; return 1
+            }
+            GH_PROJECT_NUM=$(echo "$create_out" | jq -r '.number')
+            log OK "Created new autopilot project: $project_title (#$GH_PROJECT_NUM)"
+
+            gh_try "link new project" gh project link "$GH_PROJECT_NUM" --owner "$GH_OWNER" --repo "$GH_OWNER_REPO" || true
+
+            GH_PROJECT_NODE_ID=$(gh_try "get new project ID" gh project view "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json --jq '.id') || {
+                GH_ENABLED=false; return 1
+            }
+
+            # Re-read fields from new project
+            fields_json=$(gh_try "list new fields" gh project field-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json) || {
+                GH_ENABLED=false; return 1
+            }
+            existing_status_id=$(echo "$fields_json" | jq -r '.fields[] | select(.name == "Status") | .id' 2>/dev/null | head -1)
         fi
     fi
 
-    if $needs_recreate; then
+    # If still no Status field (fresh project), create one
+    if [[ -z "$existing_status_id" ]] || [[ "$existing_status_id" == "null" ]]; then
         gh_try "create Status field" gh project field-create "$GH_PROJECT_NUM" --owner "$GH_OWNER" \
             --name "Status" --data-type "SINGLE_SELECT" \
-            --single-select-options "$expected_options" || {
-            GH_ENABLED=false
-            return 1
+            --single-select-options "Todo,In Progress,Done" || {
+            GH_ENABLED=false; return 1
         }
 
-        # Re-read fields after creation
         fields_json=$(gh_try "read fields" gh project field-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json) || {
-            GH_ENABLED=false
-            return 1
+            GH_ENABLED=false; return 1
         }
     fi
 
     GH_FIELD_STATUS_ID=$(echo "$fields_json" | jq -r '.fields[] | select(.name == "Status") | .id')
 
+    # Cache only the 3 required status options
     local options
     options=$(echo "$fields_json" | jq -c '.fields[] | select(.name == "Status") | .options[]' 2>/dev/null)
     while IFS= read -r opt; do
+        [[ -z "$opt" ]] && continue
         local name id
         name=$(echo "$opt" | jq -r '.name')
         id=$(echo "$opt" | jq -r '.id')
-        GH_STATUS_OPT["$name"]="$id"
+        case "$name" in
+            Todo|"In Progress"|Done) GH_STATUS_OPT["$name"]="$id" ;;
+        esac
     done <<< "$options"
 
     _gh_write_cache "$env_file"
