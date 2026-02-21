@@ -203,6 +203,10 @@ HAS_REMOTE="$HAS_REMOTE"
 
 # GitHub CLI (gh) available and authenticated (auto-detected).
 HAS_GH_CLI="$HAS_GH_CLI"
+
+# Force-advance past CodeRabbit CLI review failures instead of halting.
+# Set to "true" to keep the old behavior (always advance). Default: "false" (halt on failure).
+FORCE_ADVANCE_ON_REVIEW_FAIL="false"
 EOF
 
 echo "Detected: $detected"
