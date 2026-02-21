@@ -46,13 +46,13 @@ do_remote_merge() {
     echo ""
 
     local files_changed
-    files_changed=$(git -C "$repo_root" diff --name-only "$BASE_BRANCH"..HEAD | wc -l)
+    files_changed=$(git -C "$repo_root" diff --name-only "$MERGE_TARGET"..HEAD | wc -l)
     echo -e "  Files changed: ${BOLD}$files_changed${RESET}"
-    echo -e "  Target: ${BOLD}origin/$BASE_BRANCH${RESET}"
+    echo -e "  Target: ${BOLD}origin/$MERGE_TARGET${RESET}"
     echo ""
 
     if [[ -t 0 ]]; then
-        echo -n "Push $short_name & create PR to $BASE_BRANCH? [Y/n] "
+        echo -n "Push $short_name & create PR to $MERGE_TARGET? [Y/n] "
         read -r confirm
         if [[ "$confirm" =~ ^[Nn] ]]; then
             log WARN "Remote merge declined — falling back to local merge"
@@ -132,7 +132,7 @@ _coderabbit_cli_review() {
 
         local tmpfile rc=0
         tmpfile=$(mktemp)
-        (cd "$repo_root" && coderabbit review --prompt-only --base "$BASE_BRANCH") \
+        (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET") \
             > "$tmpfile" 2>&1 || rc=$?
 
         # Rate limit / network error → skip
@@ -170,8 +170,13 @@ _coderabbit_cli_review() {
         }
     done
 
-    log WARN "CodeRabbit CLI: issues remain after $max_retries rounds — force-advancing"
-    return 0
+    if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]]; then
+        log WARN "CodeRabbit CLI: issues remain after $max_retries rounds — force-advancing"
+        return 0
+    fi
+    log ERROR "CodeRabbit CLI: issues remain after $max_retries rounds — halting"
+    log ERROR "Set FORCE_ADVANCE_ON_REVIEW_FAIL=true in .specify/project.env to skip"
+    return 1
 }
 
 # ─── Rebase & Push ──────────────────────────────────────────────────────────
@@ -181,23 +186,49 @@ _rebase_and_push() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" events_log="$5"
     local max_retries=3 attempt=0
 
-    git -C "$repo_root" fetch origin "$BASE_BRANCH" || {
-        log ERROR "Failed to fetch origin/$BASE_BRANCH"
+    git -C "$repo_root" fetch origin "$MERGE_TARGET" || {
+        log ERROR "Failed to fetch origin/$MERGE_TARGET"
         return 1
     }
+
+    # Skip rebase if branch already includes base — avoids unnecessary rebase+push
+    if git -C "$repo_root" merge-base --is-ancestor "origin/$MERGE_TARGET" HEAD 2>/dev/null; then
+        log OK "Branch already up-to-date with origin/$MERGE_TARGET — skipping rebase"
+        # Still push in case local commits haven't been pushed yet
+        log INFO "Pushing $short_name to origin"
+        local push_output
+        push_output=$(git -C "$repo_root" push -u origin "$short_name" --force-with-lease 2>&1) || {
+            log ERROR "Push failed: ${push_output:0:500}"
+            return 1
+        }
+        log OK "Pushed $short_name to origin"
+        return 0
+    fi
 
     while [[ $attempt -lt $max_retries ]]; do
         attempt=$((attempt + 1))
 
-        local rc=0
-        git -C "$repo_root" rebase "origin/$BASE_BRANCH" 2>&1 || rc=$?
+        local rc=0 rebase_output
+        rebase_output=$(git -C "$repo_root" rebase "origin/$MERGE_TARGET" 2>&1) || rc=$?
 
         if [[ $rc -eq 0 ]]; then
             log OK "Rebase clean"
             break
         fi
 
-        log WARN "Rebase conflicts (attempt $attempt/$max_retries)"
+        # Distinguish rebase failure types
+        if echo "$rebase_output" | grep -qi "is up to date"; then
+            log OK "Branch already up-to-date — nothing to rebase"
+            break
+        fi
+
+        if echo "$rebase_output" | grep -qi "cannot rebase\|unstaged changes\|staged changes"; then
+            git -C "$repo_root" rebase --abort 2>/dev/null || true
+            log ERROR "Rebase failed — dirty working tree: ${rebase_output:0:500}"
+            return 1
+        fi
+
+        log WARN "Rebase failed (attempt $attempt/$max_retries): ${rebase_output:0:300}"
         _emit_event "$events_log" "rebase_conflict" \
             "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" '{epic:$e, attempt:$a}')"
 
@@ -206,7 +237,7 @@ _rebase_and_push() {
 
         if [[ -z "$conflict_files" ]]; then
             git -C "$repo_root" rebase --abort 2>/dev/null || true
-            log ERROR "Rebase failed but no conflict markers found"
+            log ERROR "Rebase failed (no conflict markers): ${rebase_output:0:500}"
             return 1
         fi
 
@@ -249,8 +280,9 @@ _rebase_and_push() {
 
     # Push
     log INFO "Pushing $short_name to origin"
-    git -C "$repo_root" push -u origin "$short_name" --force-with-lease || {
-        log ERROR "Push failed"
+    local push_output
+    push_output=$(git -C "$repo_root" push -u origin "$short_name" --force-with-lease 2>&1) || {
+        log ERROR "Push failed: ${push_output:0:500}"
         return 1
     }
     log OK "Pushed $short_name to origin"
@@ -265,7 +297,7 @@ _create_or_find_pr() {
 
     # Check for existing PR
     local existing_pr
-    existing_pr=$(cd "$repo_root" && gh pr list --head "$short_name" --base "$BASE_BRANCH" \
+    existing_pr=$(cd "$repo_root" && gh pr list --head "$short_name" --base "$MERGE_TARGET" \
         --json number --jq '.[0].number' 2>/dev/null || echo "")
 
     if [[ -n "$existing_pr" ]] && [[ "$existing_pr" != "null" ]]; then
@@ -277,7 +309,7 @@ _create_or_find_pr() {
     # Create new PR
     local pr_url
     pr_url=$(cd "$repo_root" && gh pr create \
-        --base "$BASE_BRANCH" \
+        --base "$MERGE_TARGET" \
         --head "$short_name" \
         --title "Epic $epic_num: $title" \
         --body "Auto-generated by autopilot for epic $epic_num.") || {
@@ -340,7 +372,7 @@ _poll_coderabbit_pr() {
 
         # Timeout → force-advance
         if [[ "$review_state" != "CHANGES_REQUESTED" ]]; then
-            log WARN "CodeRabbit PR review timed out after ${poll_timeout}s — force-advancing"
+            log WARN "CodeRabbit PR review timed out after ${poll_timeout}s — force-advancing (PR #${pr_num} may need manual review)"
             return 0
         fi
 
@@ -369,7 +401,7 @@ _poll_coderabbit_pr() {
         sleep 10
     done
 
-    log WARN "CodeRabbit PR: issues remain after $max_retries rounds — force-advancing"
+    log WARN "CodeRabbit PR: issues remain after $max_retries rounds — force-advancing (PR #${pr_num} may need manual review)"
     return 0
 }
 
@@ -386,6 +418,23 @@ _check_and_merge_pr() {
         local mergeable
         mergeable=$(cd "$repo_root" && gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
 
+        # Poll for UNKNOWN state — GitHub may still be computing mergeability
+        if [[ "$mergeable" == "UNKNOWN" ]]; then
+            local poll_wait=2 poll_total=0 poll_max=30
+            log INFO "PR #$pr_num mergeable state UNKNOWN — polling (max ${poll_max}s)"
+            while [[ $poll_total -lt $poll_max ]]; do
+                sleep "$poll_wait"
+                poll_total=$((poll_total + poll_wait))
+                mergeable=$(cd "$repo_root" && gh pr view "$pr_num" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
+                if [[ "$mergeable" != "UNKNOWN" ]]; then
+                    log INFO "PR #$pr_num mergeable state resolved: $mergeable (after ${poll_total}s)"
+                    break
+                fi
+                poll_wait=$((poll_wait * 2))
+                if (( poll_wait > 16 )); then poll_wait=16; fi
+            done
+        fi
+
         if [[ "$mergeable" == "MERGEABLE" ]]; then
             cd "$repo_root" && gh pr merge "$pr_num" --merge \
                 --subject "merge: $short_name — $title" || {
@@ -398,6 +447,7 @@ _check_and_merge_pr() {
             return 0
         fi
 
+        # CONFLICTING or still UNKNOWN after polling — rebase needed
         log WARN "PR not mergeable ($mergeable) — rebasing (attempt $attempt/$max_retries)"
 
         if ! _rebase_and_push "$repo_root" "$epic_num" "$short_name" "$title" "$events_log"; then
@@ -417,11 +467,11 @@ _check_and_merge_pr() {
 _post_merge_cleanup() {
     local repo_root="$1" epic_num="$2" short_name="$3" epic_file="${4:-}"
 
-    git -C "$repo_root" checkout "$BASE_BRANCH" || {
-        log ERROR "Failed to checkout $BASE_BRANCH after merge"
+    git -C "$repo_root" checkout "$MERGE_TARGET" || {
+        log ERROR "Failed to checkout $MERGE_TARGET after merge"
         return 1
     }
-    git -C "$repo_root" pull origin "$BASE_BRANCH" || {
+    git -C "$repo_root" pull origin "$MERGE_TARGET" || {
         log WARN "git pull failed — continuing"
     }
 

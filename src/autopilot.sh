@@ -151,6 +151,11 @@ invoke_claude() {
         return 0
     fi
 
+    # Write prompt to temp file to bypass ARG_MAX / large-stdin bugs
+    local prompt_file
+    prompt_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-prompt-XXXXXX.md")
+    printf '%s' "$prompt" > "$prompt_file"
+
     # Print live dashboard header
     _print_dashboard_header "$epic_num" "$title" "$phase" "$model"
 
@@ -158,13 +163,16 @@ invoke_claude() {
     export REPO_ROOT
 
     local exit_code=0
-    env -u CLAUDECODE claude -p "$prompt" \
+    env -u CLAUDECODE claude -p "Read the file ${prompt_file} and follow ALL instructions within it exactly." \
         --model "$model" \
         --allowedTools "$tools" \
         --output-format stream-json \
         --verbose \
         --dangerously-skip-permissions \
         2>&1 | process_stream "$epic_num" "$phase" || exit_code=$?
+
+    # Clean up prompt temp file
+    rm -f "$prompt_file"
 
     return "$exit_code"
 }
@@ -249,7 +257,7 @@ do_merge() {
 
     # Show summary
     local files_changed
-    files_changed=$(git -C "$repo_root" diff --name-only "$BASE_BRANCH"..HEAD | wc -l)
+    files_changed=$(git -C "$repo_root" diff --name-only "$MERGE_TARGET"..HEAD | wc -l)
     echo -e "  Files changed: ${BOLD}$files_changed${RESET}"
 
     if [[ -n "$PROJECT_TEST_CMD" ]]; then
@@ -262,9 +270,9 @@ do_merge() {
 
     # If running non-interactively (no TTY on stdin), auto-merge
     if [[ ! -t 0 ]]; then
-        log INFO "Non-interactive mode — auto-merging $short_name to $BASE_BRANCH"
+        log INFO "Non-interactive mode — auto-merging $short_name to $MERGE_TARGET"
     else
-        echo -n "Merge $short_name to $BASE_BRANCH? [Y/n] "
+        echo -n "Merge $short_name to $MERGE_TARGET? [Y/n] "
         read -r confirm
         if [[ "$confirm" =~ ^[Nn] ]]; then
             log WARN "Merge declined by user"
@@ -280,16 +288,16 @@ do_merge() {
         git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before merge"
     fi
 
-    log INFO "Merging $short_name to $BASE_BRANCH"
-    git -C "$repo_root" checkout "$BASE_BRANCH" || {
-        log ERROR "Failed to checkout $BASE_BRANCH"
+    log INFO "Merging $short_name to $MERGE_TARGET"
+    git -C "$repo_root" checkout "$MERGE_TARGET" || {
+        log ERROR "Failed to checkout $MERGE_TARGET"
         return 1
     }
 
     # Verify we actually switched
     local current_branch
     current_branch=$(git -C "$repo_root" branch --show-current)
-    if [[ "$current_branch" != "$BASE_BRANCH" ]]; then
+    if [[ "$current_branch" != "$MERGE_TARGET" ]]; then
         log ERROR "Still on $current_branch after checkout — aborting merge"
         return 1
     fi
@@ -299,7 +307,7 @@ do_merge() {
         log ERROR "Merge failed for $short_name"
         return 1
     }
-    log OK "Merged $short_name to $BASE_BRANCH"
+    log OK "Merged $short_name to $MERGE_TARGET"
 
     gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md"
 
@@ -418,7 +426,9 @@ run_epic() {
         local prev_state="$state"
 
         while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
-            if run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root"; then
+            local phase_exit=0
+            run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" || phase_exit=$?
+            if [[ $phase_exit -eq 0 ]]; then
                 # After specify, refresh short_name from actual git branch.
                 # create-new-feature.sh may use a different prefix (e.g. 036-)
                 # than the epic number (e.g. 012-), causing a mismatch.
@@ -483,7 +493,13 @@ run_epic() {
                 fi
             else
                 retries=$((retries + 1))
-                log WARN "Phase $state failed (exit code), retry $retries/${PHASE_MAX_RETRIES[$state]:-3}"
+                if [[ $phase_exit -eq 42 ]]; then
+                    local backoff=$((30 * retries))
+                    log WARN "Rate limited — backing off ${backoff}s before retry $retries/${PHASE_MAX_RETRIES[$state]:-3}"
+                    sleep "$backoff"
+                else
+                    log WARN "Phase $state failed (exit $phase_exit), retry $retries/${PHASE_MAX_RETRIES[$state]:-3}"
+                fi
             fi
         done
 
@@ -564,13 +580,14 @@ main() {
 
     # Base branch for merges (from project.env or fallback)
     BASE_BRANCH="${BASE_BRANCH:-master}"
+    MERGE_TARGET="$(detect_merge_target "$repo_root")"
 
     log INFO "Autopilot started (auto-continue=$AUTO_CONTINUE, dry-run=$DRY_RUN, silent=$SILENT)"
-    log INFO "Repository: $repo_root (base branch: $BASE_BRANCH)"
+    log INFO "Repository: $repo_root (base: $BASE_BRANCH, merge target: $MERGE_TARGET)"
     log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
-    trap 'log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
+    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-*.md 2>/dev/null; log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
 
     while true; do
         # Find next epic

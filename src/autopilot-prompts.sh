@@ -327,6 +327,15 @@ Use this structure:
 - Color palette summary (from tokens)
 - Any other notable patterns
 
+## Theme Integration
+- ALL design tokens above MUST be mapped to a theme config file before any screens are built
+- If the project already has CSS custom properties (check app.css, global.css, variables.css),
+  extend them — do not create a duplicate file
+- If the project uses Tailwind (check tailwind.config.*, CLAUDE.md), extend the Tailwind theme
+- The theme config file is the ONLY place raw hex/color values should appear
+- All component and page styles MUST reference variables (var(--token)) or Tailwind classes — never raw hex
+- This is a hard rule: a color literal like #D4213D in a .svelte/.tsx/.vue file is a bug
+
 After writing design-context.md, commit:
   git add specs/${spec_dir_name}/design-context.md
   git commit -m "docs(${epic_num}): extract design context from .pen file"
@@ -354,7 +363,9 @@ in each subagent prompt:
   "Before writing code, read .specify/memory/architecture.md for module
   dependencies and CLAUDE.md for reusable utilities and patterns.
   If specs/{name}/design-context.md exists, also read it for design token
-  values, component structure, and layout specifications."
+  values, component structure, layout specifications, and the Theme Integration
+  rules. Reference design tokens via CSS variables or Tailwind classes —
+  never hardcode hex color values in component or page files."
 
 Then invoke the Skill tool:
   skill = "speckit.implement"
@@ -383,8 +394,8 @@ $(_preamble "$epic_num" "$title" "$repo_root")
 
 All implementation tasks are complete. Perform a senior code review.
 
-1. List all changed files vs ${BASE_BRANCH}:
-   git diff --name-only ${BASE_BRANCH}..HEAD
+1. List all changed files vs ${MERGE_TARGET}:
+   git diff --name-only ${MERGE_TARGET}..HEAD
 
 2. Read EVERY changed file. Check for:
    - Constitution compliance (all principles, all prohibitions)
@@ -397,7 +408,10 @@ All implementation tasks are complete. Perform a senior code review.
    - No hardcoded paths or credentials
    - No print() / console.log debug output (use proper logging)
    - Design fidelity (if specs/${short_name}/design-context.md exists):
-     * All design tokens mapped to CSS variables or Tailwind theme
+     * Theme config file exists mapping ALL design tokens to CSS variables or Tailwind theme
+     * Design token audit: spot-check 3-5 component/page files for raw hex color values
+       that match design tokens. If found, replace with var(--token) or Tailwind class.
+       Hex values in theme config files and SVG assets are expected and allowed.
      * All screens from the screen inventory are implemented
      * Component decomposition matches the reusable components catalogue
      * Layout patterns match design specifications (flex, gap, padding, alignment)
@@ -434,7 +448,7 @@ prompt_crystallize() {
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-You just merged epic ${epic_num} ("${title}") to ${BASE_BRANCH}. Your job is to update
+You just merged epic ${epic_num} ("${title}") to ${MERGE_TARGET}. Your job is to update
 the project's compressed context files so the next epic starts with current
 architectural understanding.
 
@@ -592,7 +606,7 @@ prompt_conflict_resolve() {
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-A rebase onto origin/${BASE_BRANCH} has produced merge conflicts.
+A rebase onto origin/${MERGE_TARGET} has produced merge conflicts.
 Resolve ALL conflicts, preserving the intent of this epic's changes.
 
 CONFLICTING FILES:

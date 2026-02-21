@@ -122,15 +122,17 @@ is_epic_merged() {
 
     [[ -z "$short_name" ]] && return 1
 
-    # Fallback: check git log on base branch for merge commits
+    # Fallback: check git log for merge commits — check MERGE_TARGET first, then BASE_BRANCH
     # Note: avoid `grep -q` in a pipeline with pipefail — grep -q exits early,
     # causing SIGPIPE on the upstream command, which pipefail reports as failure.
-    local merge_match
-    merge_match="$(git -C "$repo_root" log "${BASE_BRANCH:-master}" --oneline 2>/dev/null \
-        | grep -i "merge.*${short_name}" || true)"
-    if [[ -n "$merge_match" ]]; then
-        return 0
-    fi
+    local check_branches="${MERGE_TARGET:-${BASE_BRANCH:-master}}"
+    [[ "${MERGE_TARGET:-}" != "${BASE_BRANCH:-}" ]] && check_branches="$check_branches ${BASE_BRANCH:-master}"
+    local merge_match=""
+    for check_branch in $check_branches; do
+        merge_match="$(git -C "$repo_root" log "$check_branch" --oneline 2>/dev/null \
+            | grep -i "merge.*${short_name}" || true)"
+        [[ -n "$merge_match" ]] && return 0
+    done
     return 1
 }
 
@@ -390,7 +392,7 @@ write_epic_summary() {
     cat > "$summary_file" <<SUMMARY
 # Epic $epic_num: $title
 
-**Status**: Merged to $BASE_BRANCH
+**Status**: Merged to $MERGE_TARGET
 **Branch**: $short_name
 **Files changed**: $files_changed
 **Total cost**: \$$epic_total_cost
@@ -434,6 +436,7 @@ load_project_config() {
     PROJECT_BUILD_CMD=""
     PROJECT_FORMAT_CMD=""
     BASE_BRANCH="master"
+    FORCE_ADVANCE_ON_REVIEW_FAIL="false"
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."
@@ -449,6 +452,20 @@ load_project_config() {
     fi
     if [[ -z "$PROJECT_LINT_CMD" ]]; then
         log WARN "PROJECT_LINT_CMD is empty — lint steps will be skipped"
+    fi
+}
+
+# ─── Merge Target Detection ──────────────────────────────────────────────────
+
+# Detect merge target branch: staging if it exists, otherwise BASE_BRANCH.
+# Convention-based — zero config.
+detect_merge_target() {
+    local repo_root="${1:-.}"
+    if git -C "$repo_root" rev-parse --verify staging >/dev/null 2>&1 || \
+       git -C "$repo_root" rev-parse --verify origin/staging >/dev/null 2>&1; then
+        echo "staging"
+    else
+        echo "${BASE_BRANCH:-master}"
     fi
 }
 
