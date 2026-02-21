@@ -175,6 +175,16 @@ _process_result() {
     result_text=$(echo "$line" | jq -r '.result // ""' 2>/dev/null)
     stop_reason=$(echo "$line" | jq -r '.stop_reason // "unknown"' 2>/dev/null)
 
+    # Detect rate limit — signal caller via exit code 42
+    if [[ "$stop_reason" == "rate_limit" ]] || echo "$line" | grep -qi '"rate.limit\|429\|too many requests"' 2>/dev/null; then
+        _emit_event "$events_log" "rate_limit" \
+            "$(jq -nc --arg e "$epic" --arg p "$phase" '{epic:$e, phase:$p}')"
+        log WARN "Rate limited during phase $phase"
+        # Write partial result before exiting
+        _update_status "$status_file" "$epic" "$phase"
+        exit 42
+    fi
+
     _accumulated_cost=$(echo "$_accumulated_cost $cost" | awk '{printf "%.6f", $1 + $2}')
 
     _emit_event "$events_log" "phase_end" \
