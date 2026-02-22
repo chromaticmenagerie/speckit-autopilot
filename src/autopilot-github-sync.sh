@@ -225,7 +225,8 @@ gh_sync_phase() {
     # Update epic item status
     local epic_item_id
     epic_item_id=$(jq -r '.epic.item_id // empty' "$json_file" 2>/dev/null)
-    [[ -n "$epic_item_id" ]] && gh_update_status "$epic_item_id" "$phase"
+    # Non-fatal: sync failures don't block pipeline (gh_try logs errors)
+    [[ -n "$epic_item_id" ]] && gh_update_status "$epic_item_id" "$phase" || true
 
     # During implement: sync task completions
     if [[ "$phase" == "implement" ]] && [[ -f "$tasks_file" ]]; then
@@ -239,7 +240,7 @@ gh_sync_phase() {
 
             if [[ -n "$task_url" ]]; then
                 gh_try "close task $key" gh issue close "$task_url" >/dev/null 2>&1 || true
-                [[ -n "$task_item_id" ]] && gh_update_status "$task_item_id" "done"
+                [[ -n "$task_item_id" ]] && gh_update_status "$task_item_id" "done" || true
             fi
         done < <(_gh_parse_tasks < "$tasks_file")
 
@@ -264,7 +265,7 @@ gh_sync_done() {
         url=$(jq -r --arg k "$key" '.tasks[$k].url // empty' "$json_file" 2>/dev/null)
         item_id=$(jq -r --arg k "$key" '.tasks[$k].item_id // empty' "$json_file" 2>/dev/null)
         [[ -n "$url" ]] && gh_try "close task $key" gh issue close "$url" >/dev/null 2>&1 || true
-        [[ -n "$item_id" ]] && gh_update_status "$item_id" "done"
+        [[ -n "$item_id" ]] && gh_update_status "$item_id" "done" || true
     done <<< "$task_keys"
 
     [[ -n "$tasks_file" ]] && [[ -f "$tasks_file" ]] && \
@@ -275,7 +276,7 @@ gh_sync_done() {
     epic_url=$(jq -r '.epic.url // empty' "$json_file" 2>/dev/null)
     epic_item_id=$(jq -r '.epic.item_id // empty' "$json_file" 2>/dev/null)
 
-    [[ -n "$epic_item_id" ]] && gh_update_status "$epic_item_id" "done"
+    [[ -n "$epic_item_id" ]] && gh_update_status "$epic_item_id" "done" || true
     [[ -n "$epic_url" ]] && gh_try "close epic" gh issue close "$epic_url" >/dev/null 2>&1 || true
 
     log OK "GitHub: epic $epic_num synced as Done"
