@@ -84,7 +84,8 @@ _count_pr_issues() {
 # Returns: 0 if stalled, 1 if not.
 _check_stall() {
     local counts_str="$1" stall_rounds="$2"
-    local -a counts=($counts_str)
+    local -a counts
+    read -ra counts <<< "$counts_str"
     local n=${#counts[@]}
 
     # Too few rounds to judge

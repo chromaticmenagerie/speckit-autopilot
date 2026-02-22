@@ -392,7 +392,7 @@ write_epic_summary() {
     cat > "$summary_file" <<SUMMARY
 # Epic $epic_num: $title
 
-**Status**: Merged to $MERGE_TARGET
+**Status**: Merged to ${MERGE_TARGET:-${BASE_BRANCH:-main}}
 **Branch**: $short_name
 **Files changed**: $files_changed
 **Total cost**: \$$epic_total_cost
