@@ -152,7 +152,10 @@ gh_update_status() {
     status=$(_gh_phase_to_status "$phase")
     local opt_id="${GH_STATUS_OPT[$status]:-}"
 
-    [[ -z "$opt_id" ]] && return 1
+    if [[ -z "$opt_id" ]]; then
+        log WARN "GitHub: no status option ID for phase=$phase (status=$status)"
+        return 1
+    fi
 
     gh_try "update status → $status" gh project item-edit \
         --id "$item_id" --project-id "$GH_PROJECT_NODE_ID" \
@@ -221,6 +224,8 @@ gh_sync_phase() {
 
     local json_file
     json_file=$(_gh_task_json "$repo_root" "$epic_num")
+
+    log INFO "GitHub: syncing phase=$phase for epic=$epic_num"
 
     # Update epic item status
     local epic_item_id

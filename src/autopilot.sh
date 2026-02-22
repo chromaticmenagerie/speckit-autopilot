@@ -571,6 +571,16 @@ main() {
         gh_ensure_project "$repo_root" || true
     fi
 
+    # Validate status options are populated
+    if $GH_ENABLED; then
+        if [[ -z "${GH_STATUS_OPT[Todo]:-}" ]] || \
+           [[ -z "${GH_STATUS_OPT[In Progress]:-}" ]] || \
+           [[ -z "${GH_STATUS_OPT[Done]:-}" ]]; then
+            log WARN "GitHub sync: missing required status options — disabling"
+            GH_ENABLED=false
+        fi
+    fi
+
     # Handle --github-resync mode (exits after sync)
     if $GITHUB_RESYNC; then
         if ! $GH_ENABLED; then
