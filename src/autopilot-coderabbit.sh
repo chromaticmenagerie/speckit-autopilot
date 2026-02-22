@@ -10,6 +10,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR_CR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
 # Globals set during remote merge, read by write_epic_summary()
 LAST_PR_NUMBER=""
 LAST_CR_STATUS=""
@@ -159,8 +161,10 @@ _coderabbit_cli_review() {
         fi
 
         log WARN "CodeRabbit CLI found issues (round $attempt/$max_retries)"
+        local _cli_issue_count
+        _cli_issue_count=$(_count_cli_issues "$review_output")
         _emit_event "$events_log" "coderabbit_cli_issues" \
-            "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" '{epic:$e, attempt:$a}')"
+            "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" --argjson ic "$_cli_issue_count" '{epic:$e, attempt:$a, issue_count:$ic}')"
 
         # Claude fix
         local fix_prompt
@@ -377,13 +381,15 @@ _poll_coderabbit_pr() {
         fi
 
         log WARN "CodeRabbit PR: CHANGES_REQUESTED (round $attempt/$max_retries)"
-        _emit_event "$events_log" "coderabbit_pr_changes_requested" \
-            "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson a "$attempt" \
-            '{epic:$e, pr:$pr, attempt:$a}')"
 
         # Get comments and fix
         local comments
         comments=$(_cr_pr_comments "$repo_root" "$pr_num")
+        local _pr_issue_count
+        _pr_issue_count=$(_count_pr_issues "$comments")
+        _emit_event "$events_log" "coderabbit_pr_changes_requested" \
+            "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson a "$attempt" --argjson ic "$_pr_issue_count" \
+            '{epic:$e, pr:$pr, attempt:$a, issue_count:$ic}')"
 
         local fix_prompt
         fix_prompt="$(prompt_coderabbit_fix "$epic_num" "$title" "$repo_root" "$short_name" "$comments")"

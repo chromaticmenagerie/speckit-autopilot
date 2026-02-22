@@ -2,7 +2,7 @@
 # autopilot-coderabbit-helpers.sh — CodeRabbit helper functions
 #
 # Extracted from autopilot-coderabbit.sh: PR review state queries,
-# comment fetching, and CLI output classification.
+# comment fetching, CLI output classification, issue counting.
 #
 # Sourced by autopilot-coderabbit.sh.
 
@@ -53,4 +53,26 @@ _cr_cli_is_clean() {
     # If very short (< 50 chars), likely a "nothing to report" message
     [[ ${#output} -lt 50 ]] && return 0
     return 1
+}
+
+# ─── Issue Counting ─────────────────────────────────────────────────────────
+
+# Count actionable issues in CLI review output.
+# Matches: numbered lists (1.), bullet lists (- or *), file:line patterns.
+# Conservative: undercounts preferred over overcounts.
+_count_cli_issues() {
+    local output="$1"
+    [[ -z "$output" ]] && echo "0" && return
+    local count
+    count=$(echo "$output" | grep -cE '^\s*[0-9]+\.|^\s*[-*]\s|^[^[:space:]]+:[0-9]+' || true)
+    echo "${count:-0}"
+}
+
+# Count issues in PR review comments (separated by ---).
+_count_pr_issues() {
+    local output="$1"
+    [[ -z "$output" ]] && echo "0" && return
+    local separators
+    separators=$(echo "$output" | grep -cE '^---$' || true)
+    echo $((separators + 1))
 }
