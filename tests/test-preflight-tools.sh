@@ -48,7 +48,7 @@ log() {
 
 # Extract verify_preflight_tools from autopilot-lib.sh (or autopilot-verify.sh if it exists)
 VERIFY_SRC="$SRC_DIR/autopilot-lib.sh"
-[[ -f "$SRC_DIR/autopilot-verify.sh" ]] && VERIFY_SRC="$SRC_DIR/autopilot-verify.sh"
+[[ -f "$SRC_DIR/autopilot-verify.sh" ]] && grep -q "^verify_preflight_tools()" "$SRC_DIR/autopilot-verify.sh" && VERIFY_SRC="$SRC_DIR/autopilot-verify.sh"
 
 if grep -q "^verify_preflight_tools()" "$VERIFY_SRC" 2>/dev/null; then
     eval "$(sed -n '/^verify_preflight_tools()/,/^}/p' "$VERIFY_SRC")"
