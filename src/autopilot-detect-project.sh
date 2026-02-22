@@ -77,6 +77,35 @@ detect_python() {
     return 1
 }
 
+detect_node_monorepo() {
+    # Must have package.json
+    [[ -f "$REPO_ROOT/package.json" ]] || return 1
+
+    # Must be a workspace root (package.json "workspaces" or pnpm-workspace.yaml)
+    local is_workspace=false
+    if grep -q '"workspaces"' "$REPO_ROOT/package.json" 2>/dev/null; then
+        is_workspace=true
+    elif [[ -f "$REPO_ROOT/pnpm-workspace.yaml" ]]; then
+        is_workspace=true
+    fi
+    [[ "$is_workspace" == "true" ]] || return 1
+
+    # Must have Makefile with BOTH test: and lint: targets
+    [[ -f "$REPO_ROOT/Makefile" ]] || return 1
+    grep -q "^test:" "$REPO_ROOT/Makefile" || return 1
+    grep -q "^lint:" "$REPO_ROOT/Makefile" || return 1
+
+    TEST_CMD="make test"
+    LINT_CMD="make lint"
+    grep -q "^build:" "$REPO_ROOT/Makefile" && BUILD_CMD="make build"
+    if grep -q "^fmt:" "$REPO_ROOT/Makefile"; then
+        FORMAT_CMD="make fmt"
+    elif grep -q "^format:" "$REPO_ROOT/Makefile"; then
+        FORMAT_CMD="make format"
+    fi
+    PREFLIGHT_TOOLS="make"
+    return 0
+}
 detect_node() {
     if [[ -f "$REPO_ROOT/package.json" ]]; then
         TEST_CMD="npm test"
@@ -170,6 +199,8 @@ detect_gh_cli() {
 detected="unknown"
 if detect_python; then
     detected="Python"
+elif detect_node_monorepo; then
+    detected="Node-Monorepo"
 elif detect_node; then
     detected="Node/JS/TS"
 elif detect_rust; then
