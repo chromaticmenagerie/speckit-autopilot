@@ -35,6 +35,22 @@ if [[ -f "$ENV_FILE" ]] && [[ "$FORCE" != true ]]; then
     exit 0
 fi
 
+
+# Ensure .specify/logs/ is gitignored in target repo.
+# Idempotent: safe to call multiple times.
+_ensure_gitignore_logs() {
+    local repo_root="$1"
+    local gitignore="$repo_root/.gitignore"
+
+    if [[ ! -f "$gitignore" ]]; then
+        echo ".specify/logs/" > "$gitignore"
+        return 0
+    fi
+
+    if ! grep -qxF '.specify/logs/' "$gitignore"; then
+        echo '.specify/logs/' >> "$gitignore"
+    fi
+}
 # ─── Detection ───────────────────────────────────────────────────────────────
 
 TEST_CMD=""
@@ -221,6 +237,7 @@ PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
 CONVERGENCE_STALL_ROUNDS=2
 EOF
 
+_ensure_gitignore_logs "$REPO_ROOT"
 echo "Detected: $detected"
 echo "Written:  $ENV_FILE"
 echo ""
