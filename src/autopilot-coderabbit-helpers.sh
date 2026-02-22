@@ -76,3 +76,28 @@ _count_pr_issues() {
     separators=$(echo "$output" | grep -cE '^---$' || true)
     echo $((separators + 1))
 }
+
+# ─── Stall Detection ────────────────────────────────────────────────────────
+
+# Check if issue counts have stalled (last N rounds identical, non-zero).
+# Args: space-separated counts string, stall_rounds threshold.
+# Returns: 0 if stalled, 1 if not.
+_check_stall() {
+    local counts_str="$1" stall_rounds="$2"
+    local -a counts=($counts_str)
+    local n=${#counts[@]}
+
+    # Too few rounds to judge
+    (( n < stall_rounds )) && return 1
+
+    # Guard: last count is 0 means clean — not stalled
+    local last="${counts[$((n - 1))]}"
+    (( last == 0 )) && return 1
+
+    # Check if last N entries are identical
+    local i
+    for (( i = n - stall_rounds + 1; i < n; i++ )); do
+        [[ "${counts[$i]}" != "${counts[$((i - 1))]}" ]] && return 1
+    done
+    return 0
+}

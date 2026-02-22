@@ -216,6 +216,9 @@ FORCE_ADVANCE_ON_REVIEW_FAIL="false"
 
 # Preflight tools required by this project (space-separated).
 PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
+
+# Number of identical issue-count rounds before declaring stall. Default: 2.
+CONVERGENCE_STALL_ROUNDS=2
 EOF
 
 echo "Detected: $detected"

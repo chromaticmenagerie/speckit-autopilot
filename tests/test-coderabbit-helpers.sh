@@ -67,19 +67,19 @@ assert_eq "1" "$result" "single comment no separator"
 
 echo "Test: _check_stall"
 
-_check_stall "5 3 3" 2; rc=$?
+rc=0; _check_stall "5 3 3" 2 || rc=$?
 assert_eq "0" "$rc" "stalled: last 2 identical"
 
-_check_stall "5 3 2" 2; rc=$?
+rc=0; _check_stall "5 3 2" 2 || rc=$?
 assert_eq "1" "$rc" "not stalled: counts differ"
 
-_check_stall "5" 2; rc=$?
+rc=0; _check_stall "5" 2 || rc=$?
 assert_eq "1" "$rc" "too few rounds"
 
-_check_stall "5 5 5" 3; rc=$?
+rc=0; _check_stall "5 5 5" 3 || rc=$?
 assert_eq "0" "$rc" "stalled: last 3 identical"
 
-_check_stall "0 0" 2; rc=$?
+rc=0; _check_stall "0 0" 2 || rc=$?
 assert_eq "1" "$rc" "not stalled: 0 means clean"
 
 # ─── Summary ────────────────────────────────────────────────────────────────

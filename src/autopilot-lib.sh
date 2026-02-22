@@ -438,6 +438,7 @@ load_project_config() {
     BASE_BRANCH="master"
     FORCE_ADVANCE_ON_REVIEW_FAIL="false"
     PROJECT_PREFLIGHT_TOOLS=""
+    CONVERGENCE_STALL_ROUNDS=2
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."

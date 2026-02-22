@@ -70,7 +70,13 @@ do_remote_merge() {
 
     # Step 1: CodeRabbit CLI review (optional)
     if [[ "${HAS_CODERABBIT:-false}" == "true" ]]; then
-        _coderabbit_cli_review "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file" "$events_log"
+        local _cli_rc=0
+        _coderabbit_cli_review "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file" "$events_log" || _cli_rc=$?
+        if [[ $_cli_rc -eq 2 ]]; then
+            log WARN "CodeRabbit CLI stalled — continuing to push/PR"
+        elif [[ $_cli_rc -ne 0 ]]; then
+            return 1
+        fi
     fi
 
     # Step 2: Commit dirty tree before push
@@ -97,8 +103,15 @@ do_remote_merge() {
 
     # Step 5: CodeRabbit PR review (optional)
     if [[ "${HAS_CODERABBIT:-false}" == "true" ]]; then
-        _poll_coderabbit_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log"
-        LAST_CR_STATUS="reviewed"
+        local _pr_rc=0
+        _poll_coderabbit_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log" || _pr_rc=$?
+        if [[ $_pr_rc -eq 2 ]]; then
+            LAST_CR_STATUS="stalled"
+        elif [[ $_pr_rc -ne 0 ]]; then
+            return 1
+        else
+            LAST_CR_STATUS="reviewed"
+        fi
     else
         LAST_CR_STATUS="skipped"
     fi
@@ -125,6 +138,7 @@ do_remote_merge() {
 _coderabbit_cli_review() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5" events_log="$6"
     local max_retries=3 attempt=0
+    local -a _cli_issue_counts=()
 
     log PHASE "CodeRabbit CLI review"
 
@@ -163,6 +177,13 @@ _coderabbit_cli_review() {
         log WARN "CodeRabbit CLI found issues (round $attempt/$max_retries)"
         local _cli_issue_count
         _cli_issue_count=$(_count_cli_issues "$review_output")
+        _cli_issue_counts+=("$_cli_issue_count")
+        if _check_stall "${_cli_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
+            log WARN "CodeRabbit CLI stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
+            _emit_event "$events_log" "coderabbit_cli_stalled" \
+                "$(jq -nc --arg e "$epic_num" --argjson ic "$_cli_issue_count" '{epic:$e, issue_count:$ic}')"
+            return 2
+        fi
         _emit_event "$events_log" "coderabbit_cli_issues" \
             "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" --argjson ic "$_cli_issue_count" '{epic:$e, attempt:$a, issue_count:$ic}')"
 
@@ -346,6 +367,7 @@ _poll_coderabbit_pr() {
     local max_retries=3 attempt=0
     local poll_interval=30
     local poll_timeout=600
+    local -a _pr_issue_counts=()
 
     log PHASE "Waiting for CodeRabbit PR review on #$pr_num"
 
@@ -387,6 +409,13 @@ _poll_coderabbit_pr() {
         comments=$(_cr_pr_comments "$repo_root" "$pr_num")
         local _pr_issue_count
         _pr_issue_count=$(_count_pr_issues "$comments")
+        _pr_issue_counts+=("$_pr_issue_count")
+        if _check_stall "${_pr_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
+            log WARN "CodeRabbit PR stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
+            _emit_event "$events_log" "coderabbit_pr_stalled" \
+                "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson ic "$_pr_issue_count" '{epic:$e, pr:$pr, issue_count:$ic}')"
+            return 2
+        fi
         _emit_event "$events_log" "coderabbit_pr_changes_requested" \
             "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson a "$attempt" --argjson ic "$_pr_issue_count" \
             '{epic:$e, pr:$pr, attempt:$a, issue_count:$ic}')"
