@@ -590,8 +590,8 @@ Instructions:
    - Best practice violations (MEDIUM)
    - Style/convention issues (LOW)
 4. After fixing, verify:
-$(if [[ -n "\$PROJECT_TEST_CMD" ]]; then echo "   cd \${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_TEST_CMD}"; fi)
-$(if [[ -n "\$PROJECT_LINT_CMD" ]]; then echo "   cd \${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_LINT_CMD}"; fi)
+$(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
+$(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
 5. Commit all fixes:
    git add <specific files>
    git commit -m "fix(${epic_num}): resolve CodeRabbit review findings"
