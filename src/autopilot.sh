@@ -562,6 +562,9 @@ main() {
     init_logging "$repo_root"
     load_project_config "$repo_root"
 
+    # Preflight: verify project tools are available
+    verify_preflight_tools "$repo_root" || exit 1
+
     # GitHub Projects integration
     gh_detect
     if $GH_ENABLED; then

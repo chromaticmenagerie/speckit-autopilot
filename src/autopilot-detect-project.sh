@@ -42,6 +42,7 @@ LINT_CMD=""
 WORK_DIR="."
 BUILD_CMD=""
 FORMAT_CMD=""
+PREFLIGHT_TOOLS=""
 
 detect_python() {
     if [[ -f "$REPO_ROOT/pyproject.toml" ]] || [[ -f "$REPO_ROOT/setup.py" ]]; then
@@ -50,8 +51,10 @@ detect_python() {
         if grep -q "ruff" "$REPO_ROOT/pyproject.toml" 2>/dev/null || command -v ruff >/dev/null 2>&1; then
             LINT_CMD="ruff check ."
             FORMAT_CMD="ruff format ."
+            PREFLIGHT_TOOLS="ruff pytest"
         elif command -v flake8 >/dev/null 2>&1; then
             LINT_CMD="flake8 ."
+            PREFLIGHT_TOOLS="flake8 pytest"
         fi
         return 0
     fi
@@ -62,6 +65,7 @@ detect_node() {
     if [[ -f "$REPO_ROOT/package.json" ]]; then
         TEST_CMD="npm test"
         LINT_CMD="npm run lint"
+        PREFLIGHT_TOOLS="eslint"
         return 0
     fi
     return 1
@@ -73,6 +77,7 @@ detect_rust() {
         LINT_CMD="cargo clippy -- -D warnings"
         BUILD_CMD="cargo build"
         FORMAT_CMD="cargo fmt --check"
+        PREFLIGHT_TOOLS="cargo"
         return 0
     fi
     return 1
@@ -84,6 +89,7 @@ detect_go() {
         LINT_CMD="golangci-lint run"
         BUILD_CMD="go build ./..."
         FORMAT_CMD="gofmt -l ."
+        PREFLIGHT_TOOLS="golangci-lint"
         return 0
     fi
     return 1
@@ -207,6 +213,9 @@ HAS_GH_CLI="$HAS_GH_CLI"
 # Force-advance past CodeRabbit CLI review failures instead of halting.
 # Set to "true" to keep the old behavior (always advance). Default: "false" (halt on failure).
 FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+
+# Preflight tools required by this project (space-separated).
+PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
 EOF
 
 echo "Detected: $detected"
@@ -221,6 +230,7 @@ echo "  BASE_BRANCH: $BASE_BRANCH"
 echo "  CODERABBIT: ${HAS_CODERABBIT}"
 echo "  REMOTE:     ${HAS_REMOTE}"
 echo "  GH_CLI:     ${HAS_GH_CLI}"
+echo "  PREFLIGHT:  ${PREFLIGHT_TOOLS:-"(none)"}"
 echo ""
 echo "Review and adjust as needed, then commit to git."
 

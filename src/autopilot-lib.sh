@@ -437,6 +437,7 @@ load_project_config() {
     PROJECT_FORMAT_CMD=""
     BASE_BRANCH="master"
     FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+    PROJECT_PREFLIGHT_TOOLS=""
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."
@@ -472,6 +473,30 @@ detect_merge_target() {
 # ─── Verification ───────────────────────────────────────────────────────────
 
 source "${SCRIPT_DIR}/autopilot-verify.sh"
+
+verify_preflight_tools() {
+    local repo_root="$1"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log INFO "[DRY RUN] Would verify preflight tools"
+        return 0
+    fi
+    if [[ -z "${PROJECT_PREFLIGHT_TOOLS:-}" ]]; then
+        log INFO "No preflight tools configured — skipping"
+        return 0
+    fi
+    local -a missing=()
+    for tool in $PROJECT_PREFLIGHT_TOOLS; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing+=("$tool")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log ERROR "Missing preflight tools: ${missing[*]}"
+        return 1
+    fi
+    log OK "All preflight tools available"
+    return 0
+}
 
 # ─── Project Summary ──────────────────────────────────────────────────
 
