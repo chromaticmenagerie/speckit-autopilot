@@ -154,7 +154,8 @@ invoke_claude() {
 
     # Write prompt to temp file to bypass ARG_MAX / large-stdin bugs
     local prompt_file
-    prompt_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-prompt-XXXXXX.md")
+    prompt_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-prompt-XXXXXX")
+    [[ -z "$prompt_file" || ! -f "$prompt_file" ]] && { log ERROR "Failed to create temp file"; return 1; }
     printf '%s' "$prompt" > "$prompt_file"
 
     # Print live dashboard header
@@ -622,7 +623,7 @@ main() {
     log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
-    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-*.md 2>/dev/null; log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
+    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-* 2>/dev/null; log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
 
     while true; do
         # Find next epic
