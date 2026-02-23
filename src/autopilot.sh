@@ -27,6 +27,7 @@ source "$SCRIPT_DIR/autopilot-stream.sh"
 source "$SCRIPT_DIR/autopilot-prompts.sh"
 source "$SCRIPT_DIR/autopilot-github.sh"
 source "$SCRIPT_DIR/autopilot-coderabbit.sh"
+source "$SCRIPT_DIR/autopilot-verify.sh"
 source "$SCRIPT_DIR/autopilot-finalize.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -288,6 +289,21 @@ do_merge() {
         git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before merge"
     fi
 
+    # Verify tests pass before merging
+    if [[ -n "${PROJECT_TEST_CMD:-}" ]]; then
+        if ! verify_tests "$repo_root"; then
+            log ERROR "Tests failing on feature branch — cannot merge"
+            return 1
+        fi
+        log OK "Tests pass — proceeding with merge"
+    fi
+
+    if [[ -n "${PROJECT_LINT_CMD:-}" ]]; then
+        if ! verify_lint "$repo_root"; then
+            log WARN "Lint issues detected — proceeding with merge (non-blocking)"
+        fi
+    fi
+
     log INFO "Merging $short_name to $MERGE_TARGET"
     git -C "$repo_root" checkout "$MERGE_TARGET" || {
         log ERROR "Failed to checkout $MERGE_TARGET"
@@ -390,8 +406,10 @@ run_epic() {
             local retries=0
             while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
                 if run_phase "review" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root"; then
+                    _accumulate_phase_cost "$repo_root"
                     break
                 fi
+                _accumulate_phase_cost "$repo_root"
                 retries=$((retries + 1))
                 log WARN "Review attempt $retries/${PHASE_MAX_RETRIES[$state]:-3} failed, retrying..."
             done
@@ -401,13 +419,16 @@ run_epic() {
                 return 1
             fi
 
-            # Accumulate review phase cost
-            _accumulate_phase_cost "$repo_root"
+            log INFO "Review phase complete — transitioning to merge gate"
+            log INFO "Current branch: $(git -C "$repo_root" branch --show-current 2>/dev/null || echo 'unknown')"
+            log INFO "Working tree clean: $(git -C "$repo_root" status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted files"
 
             # Merge gate
+            log INFO "Entering merge gate for epic $epic_num ($short_name)"
             if ! do_remote_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
                 return 1
             fi
+            log OK "Merge gate passed for epic $epic_num"
 
             # Post-merge crystallization — update context files on base branch
             # Non-blocking: failure does not stop the pipeline
@@ -428,6 +449,8 @@ run_epic() {
         while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
             local phase_exit=0
             run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" || phase_exit=$?
+            # Always accumulate cost after every phase attempt (success or failure)
+            _accumulate_phase_cost "$repo_root"
             if [[ $phase_exit -eq 0 ]]; then
                 # After specify, refresh short_name from actual git branch.
                 # create-new-feature.sh may use a different prefix (e.g. 036-)
@@ -473,8 +496,7 @@ run_epic() {
                 new_state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
 
                 if [[ "$new_state" != "$prev_state" ]]; then
-                    _accumulate_phase_cost "$repo_root"
-                    log OK "Phase $prev_state → $new_state"
+                    log OK "Phase $prev_state → $new_state (exit=$phase_exit)"
 
                     # After tasks phase: create task issues
                     if [[ "$prev_state" == "tasks" ]] && $GH_ENABLED; then
@@ -488,7 +510,7 @@ run_epic() {
                     if [[ "$state" == "clarify" || "$state" == "analyze" ]]; then
                         log INFO "${state^} round $retries/${PHASE_MAX_RETRIES[$state]:-5} — observations remain, re-running in fresh context"
                     else
-                        log WARN "State did not advance ($state), retry $retries/${PHASE_MAX_RETRIES[$state]:-3}"
+                        log WARN "Phase $state did not advance (attempt $((retries))/${PHASE_MAX_RETRIES[$state]:-3}, exit=$phase_exit)"
                     fi
                 fi
             else
