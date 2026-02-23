@@ -399,7 +399,7 @@ _poll_coderabbit_pr() {
         # Timeout → force-advance
         if [[ "$review_state" != "CHANGES_REQUESTED" ]]; then
             log WARN "CodeRabbit PR review timed out after ${poll_timeout}s — force-advancing (PR #${pr_num} may need manual review)"
-            return 0
+            return 2
         fi
 
         log WARN "CodeRabbit PR: CHANGES_REQUESTED (round $attempt/$max_retries)"
@@ -437,7 +437,7 @@ _poll_coderabbit_pr() {
     done
 
     log WARN "CodeRabbit PR: issues remain after $max_retries rounds — force-advancing (PR #${pr_num} may need manual review)"
-    return 0
+    return 2
 }
 
 # ─── Mergeable Check & Merge ───────────────────────────────────────────────
@@ -498,23 +498,26 @@ _check_and_merge_pr() {
 
 # ─── Post-Merge Cleanup ────────────────────────────────────────────────────
 
-# Checkout base, pull, update YAML.
+# Mark merged FIRST (durable state), then checkout base as non-fatal cleanup.
 _post_merge_cleanup() {
     local repo_root="$1" epic_num="$2" short_name="$3" epic_file="${4:-}"
 
-    git -C "$repo_root" checkout "$MERGE_TARGET" || {
-        log ERROR "Failed to checkout $MERGE_TARGET after merge"
-        return 1
-    }
-    git -C "$repo_root" pull origin "$MERGE_TARGET" || {
-        log WARN "git pull failed — continuing"
-    }
-
+    # Mark epic as merged FIRST (durable state before cleanup)
     if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
         mark_epic_merged "$epic_file" "$short_name"
         git -C "$repo_root" add "$epic_file"
         git -C "$repo_root" commit -m "fix($epic_num): mark epic YAML as merged" || true
+        git -C "$repo_root" push origin HEAD || log WARN "Failed to push YAML marker"
     fi
+
+    # Cleanup: switch to base branch (non-fatal — state is already durable)
+    git -C "$repo_root" checkout "$MERGE_TARGET" || {
+        log WARN "Failed to checkout $MERGE_TARGET after merge — manual cleanup needed"
+        return 0
+    }
+    git -C "$repo_root" pull origin "$MERGE_TARGET" || {
+        log WARN "git pull failed — continuing"
+    }
 
     return 0
 }
