@@ -16,9 +16,9 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 # Returns: APPROVED, CHANGES_REQUESTED, or empty.
 _cr_pr_review_state() {
     local repo_root="$1" pr_num="$2"
-    cd "$repo_root" && gh api "repos/{owner}/{repo}/pulls/$pr_num/reviews" \
+    (cd "$repo_root" && gh api "repos/{owner}/{repo}/pulls/$pr_num/reviews" \
         --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .state // empty' \
-        2>/dev/null || echo ""
+        2>/dev/null) || echo ""
 }
 
 # Get coderabbitai[bot] review comments as text for Claude.
