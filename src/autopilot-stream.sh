@@ -21,6 +21,7 @@ _accumulated_cost=0
 _accumulated_input=0
 _accumulated_output=0
 _last_tool=""
+_last_stop_reason="unknown"
 _impl_progress_cache="{}"
 _impl_tasks_mtime=""
 
@@ -138,6 +139,13 @@ _process_assistant_event() {
         i=$((i + 1))
     done
 
+    # Track assistant-level stop_reason (the real API stop_reason)
+    local msg_stop_reason
+    msg_stop_reason=$(echo "$line" | jq -r '.message.stop_reason // empty' 2>/dev/null)
+    if [[ -n "$msg_stop_reason" ]]; then
+        _last_stop_reason="$msg_stop_reason"
+    fi
+
     # Accumulate token usage
     local in_tok out_tok cache_tok
     in_tok=$(echo "$line" | jq '.message.usage.input_tokens // 0' 2>/dev/null || echo 0)
@@ -170,10 +178,13 @@ _process_result() {
     local events_log="$1" phase_log="$2" status_file="$3" epic="$4" phase="$5" line="$6"
 
     local duration cost result_text stop_reason
+    local subtype is_error
     duration=$(echo "$line" | jq '.duration_ms // 0' 2>/dev/null)
     cost=$(echo "$line" | jq '.total_cost_usd // 0' 2>/dev/null)
     result_text=$(echo "$line" | jq -r '.result // ""' 2>/dev/null)
-    stop_reason=$(echo "$line" | jq -r '.stop_reason // "unknown"' 2>/dev/null)
+    subtype=$(echo "$line" | jq -r '.subtype // "unknown"' 2>/dev/null)
+    is_error=$(echo "$line" | jq -r '.is_error // false' 2>/dev/null)
+    stop_reason="$_last_stop_reason"  # From last assistant event
 
     # Detect rate limit — signal caller via exit code 42
     if [[ "$stop_reason" == "rate_limit" ]] || echo "$line" | grep -qi '"rate.limit\|429\|too many requests"' 2>/dev/null; then
@@ -187,11 +198,63 @@ _process_result() {
 
     _accumulated_cost=$(echo "$_accumulated_cost $cost" | awk '{printf "%.6f", $1 + $2}')
 
+    # Check result subtype for non-success outcomes
+    case "$subtype" in
+        success) ;; # Normal completion — continue to write phase log
+        error_max_turns)
+            log WARN "Phase $phase hit max turns limit"
+            _emit_event "$events_log" "phase_end" \
+                "$(jq -nc --arg e "$epic" --arg p "$phase" --argjson d "${duration:-0}" \
+                --arg sr "$stop_reason" --arg st "$subtype" \
+                --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
+                '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
+            _update_status "$status_file" "$epic" "$phase"
+            echo "$result_text" > "$phase_log"
+            exit 3
+            ;;
+        error_during_execution)
+            log ERROR "Phase $phase encountered an execution error"
+            _emit_event "$events_log" "phase_end" \
+                "$(jq -nc --arg e "$epic" --arg p "$phase" --argjson d "${duration:-0}" \
+                --arg sr "$stop_reason" --arg st "$subtype" \
+                --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
+                '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
+            _update_status "$status_file" "$epic" "$phase"
+            echo "$result_text" > "$phase_log"
+            exit 1
+            ;;
+        error_max_budget_usd)
+            log ERROR "Phase $phase exceeded budget limit"
+            _emit_event "$events_log" "phase_end" \
+                "$(jq -nc --arg e "$epic" --arg p "$phase" --argjson d "${duration:-0}" \
+                --arg sr "$stop_reason" --arg st "$subtype" \
+                --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
+                '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
+            _update_status "$status_file" "$epic" "$phase"
+            echo "$result_text" > "$phase_log"
+            exit 4
+            ;;
+        unknown|*)
+            if [[ "$is_error" == "true" ]]; then
+                log WARN "Phase $phase ended with unknown error (subtype=$subtype)"
+                _emit_event "$events_log" "phase_end" \
+                    "$(jq -nc --arg e "$epic" --arg p "$phase" --argjson d "${duration:-0}" \
+                    --arg sr "$stop_reason" --arg st "$subtype" \
+                    --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
+                    '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
+                _update_status "$status_file" "$epic" "$phase"
+                echo "$result_text" > "$phase_log"
+                exit 5
+            fi
+            # Unknown subtype but is_error=false — treat as success
+            ;;
+    esac
+
     _emit_event "$events_log" "phase_end" \
-        "$(jq -nc --arg e "$epic" --arg p "$phase" --arg sr "$stop_reason" \
+        "$(jq -nc --arg e "$epic" --arg p "$phase" --arg sr "$stop_reason" --arg st "$subtype" \
         --argjson dur "${duration:-0}" --argjson cost "${cost:-0}" \
         --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
-        '{epic:$e, phase:$p, duration_ms:$dur, cost_usd:$cost, stop_reason:$sr,
+        '{epic:$e, phase:$p, duration_ms:$dur, cost_usd:$cost, stop_reason:$sr, subtype:$st,
           tokens:{input:$ti, output:$to}}')"
 
     echo "$result_text" > "$phase_log"
