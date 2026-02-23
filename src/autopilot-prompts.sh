@@ -433,11 +433,16 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_
    git commit -m "feat(${epic_num}): final review changes" || echo "Nothing to commit"
    Verify: git status shows a CLEAN working tree with no uncommitted changes.
 
-7. Report final summary:
-   - Files changed (count)
-   - Tests passing (count)
-   - Lint status
-   - Any remaining concerns
+7. Report a structured review summary (this will be captured as the review audit trail):
+
+   ## Review Summary
+   - **Files reviewed**: <count>
+   - **Issues found**: <count>
+   - **Issues fixed**: <count> (list each with file:line and one-line description)
+   - **Issues dismissed**: <count> (list each with rationale)
+   - **Tests**: <pass/fail with count>
+   - **Lint**: <pass/fail>
+   - **Remaining concerns**: <any items that need human attention>
 EOF
 }
 
