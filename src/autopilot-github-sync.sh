@@ -9,6 +9,7 @@
 _gh_task_json() {
     local repo_root="$1" epic_num="$2"
     local f="$repo_root/.specify/logs/${epic_num}-task-issues.json"
+    mkdir -p "$(dirname "$f")"
     if [[ ! -f "$f" ]]; then
         echo '{"epic":null,"tasks":{}}' > "$f"
     fi

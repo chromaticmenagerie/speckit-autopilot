@@ -18,6 +18,17 @@ BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
+# ─── Project Config Defaults (overwritten by load_project_config) ────
+PROJECT_TEST_CMD=""
+PROJECT_LINT_CMD=""
+PROJECT_WORK_DIR="."
+PROJECT_BUILD_CMD=""
+PROJECT_FORMAT_CMD=""
+PROJECT_PREFLIGHT_TOOLS=""
+BASE_BRANCH=""
+FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+CONVERGENCE_STALL_ROUNDS=2
+
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
 AUTOPILOT_LOG=""
