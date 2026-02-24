@@ -26,6 +26,9 @@ do_remote_merge() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="${5:-}"
     local events_log="$repo_root/.specify/logs/events.jsonl"
 
+    # Suppress ANSI color from gh CLI output
+    export GH_NO_COLOR=1
+
     # Gate: no remote → local merge
     if [[ "${HAS_REMOTE:-false}" != "true" ]]; then
         log INFO "No git remote — falling back to local merge"
@@ -55,7 +58,7 @@ do_remote_merge() {
 
     if [[ -t 0 ]]; then
         echo -n "Push $short_name & create PR to $MERGE_TARGET? [Y/n] "
-        read -r confirm
+        read -r -t 30 confirm || confirm="Y"
         if [[ "$confirm" =~ ^[Nn] ]]; then
             log WARN "Remote merge declined — falling back to local merge"
             do_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
@@ -101,20 +104,8 @@ do_remote_merge() {
     }
     LAST_PR_NUMBER="$pr_num"
 
-    # Step 5: CodeRabbit PR review (optional)
-    if [[ "${HAS_CODERABBIT:-false}" == "true" ]]; then
-        local _pr_rc=0
-        _poll_coderabbit_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log" || _pr_rc=$?
-        if [[ $_pr_rc -eq 2 ]]; then
-            LAST_CR_STATUS="stalled"
-        elif [[ $_pr_rc -ne 0 ]]; then
-            return 1
-        else
-            LAST_CR_STATUS="reviewed"
-        fi
-    else
-        LAST_CR_STATUS="skipped"
-    fi
+    # Step 5: CodeRabbit PR review — removed in v0.6.0
+    LAST_CR_STATUS="skipped"  # PR review polling removed in v0.6.0 — CLI review is sufficient
 
     # Step 6: Merge PR
     if ! _check_and_merge_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log"; then
@@ -177,6 +168,8 @@ _coderabbit_cli_review() {
         log WARN "CodeRabbit CLI found issues (round $attempt/$max_retries)"
         local _cli_issue_count
         _cli_issue_count=$(_count_cli_issues "$review_output")
+        _cli_issue_count="${_cli_issue_count:-0}"
+        [[ "$_cli_issue_count" =~ ^[0-9]+$ ]] || _cli_issue_count=0
         _cli_issue_counts+=("$_cli_issue_count")
         if _check_stall "${_cli_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
             log WARN "CodeRabbit CLI stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
@@ -341,6 +334,7 @@ _create_or_find_pr() {
         log ERROR "PR creation failed"
         return 1
     }
+    pr_url=$(echo "$pr_url" | sed 's/\x1b\[[0-9;]*m//g')
 
     # Extract PR number from URL
     local pr_num
@@ -358,88 +352,6 @@ _create_or_find_pr() {
     return 0
 }
 
-# ─── CodeRabbit PR Review Polling ───────────────────────────────────────────
-
-# Poll for coderabbitai[bot] review. Fix loop on CHANGES_REQUESTED (max 3).
-# Non-blocking: force-advances on timeout or max retries.
-_poll_coderabbit_pr() {
-    local repo_root="$1" epic_num="$2" short_name="$3" title="$4" pr_num="$5" events_log="$6"
-    local max_retries=3 attempt=0
-    local poll_interval=30
-    local poll_timeout=600
-    local -a _pr_issue_counts=()
-
-    log PHASE "Waiting for CodeRabbit PR review on #$pr_num"
-
-    while [[ $attempt -lt $max_retries ]]; do
-        attempt=$((attempt + 1))
-        log INFO "CodeRabbit PR review poll (round $attempt/$max_retries)"
-
-        local review_state="" waited=0
-
-        while [[ $waited -lt $poll_timeout ]]; do
-            review_state=$(_cr_pr_review_state "$repo_root" "$pr_num")
-
-            if [[ "$review_state" == "APPROVED" ]]; then
-                log OK "CodeRabbit PR review: APPROVED"
-                _emit_event "$events_log" "coderabbit_pr_approved" \
-                    "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" '{epic:$e, pr:$pr}')"
-                return 0
-            fi
-
-            if [[ "$review_state" == "CHANGES_REQUESTED" ]]; then
-                break
-            fi
-
-            # Still pending
-            sleep "$poll_interval"
-            waited=$((waited + poll_interval))
-        done
-
-        # Timeout → force-advance
-        if [[ "$review_state" != "CHANGES_REQUESTED" ]]; then
-            log WARN "CodeRabbit PR review timed out after ${poll_timeout}s — force-advancing (PR #${pr_num} may need manual review)"
-            return 2
-        fi
-
-        log WARN "CodeRabbit PR: CHANGES_REQUESTED (round $attempt/$max_retries)"
-
-        # Get comments and fix
-        local comments
-        comments=$(_cr_pr_comments "$repo_root" "$pr_num")
-        local _pr_issue_count
-        _pr_issue_count=$(_count_pr_issues "$comments")
-        _pr_issue_counts+=("$_pr_issue_count")
-        if _check_stall "${_pr_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
-            log WARN "CodeRabbit PR stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
-            _emit_event "$events_log" "coderabbit_pr_stalled" \
-                "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson ic "$_pr_issue_count" '{epic:$e, pr:$pr, issue_count:$ic}')"
-            return 2
-        fi
-        _emit_event "$events_log" "coderabbit_pr_changes_requested" \
-            "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" --argjson a "$attempt" --argjson ic "$_pr_issue_count" \
-            '{epic:$e, pr:$pr, attempt:$a, issue_count:$ic}')"
-
-        local fix_prompt
-        fix_prompt="$(prompt_coderabbit_fix "$epic_num" "$title" "$repo_root" "$short_name" "$comments")"
-        invoke_claude "coderabbit-fix" "$fix_prompt" "$epic_num" "$title" || {
-            log WARN "Claude fix invocation failed"
-        }
-
-        # Push fixes
-        git -C "$repo_root" push origin "$short_name" --force-with-lease || {
-            log ERROR "Push failed after PR review fix"
-            return 1
-        }
-
-        # Let CodeRabbit pick up the new push
-        sleep 10
-    done
-
-    log WARN "CodeRabbit PR: issues remain after $max_retries rounds — force-advancing (PR #${pr_num} may need manual review)"
-    return 2
-}
-
 # ─── Mergeable Check & Merge ───────────────────────────────────────────────
 
 # Verify PR is mergeable, then merge via gh. Retry on conflicts.
@@ -455,7 +367,7 @@ _check_and_merge_pr() {
 
         # Poll for UNKNOWN state — GitHub may still be computing mergeability
         if [[ "$mergeable" == "UNKNOWN" ]]; then
-            local poll_wait=2 poll_total=0 poll_max=30
+            local poll_wait=2 poll_total=0 poll_max=300
             log INFO "PR #$pr_num mergeable state UNKNOWN — polling (max ${poll_max}s)"
             while [[ $poll_total -lt $poll_max ]]; do
                 sleep "$poll_wait"
@@ -482,11 +394,28 @@ _check_and_merge_pr() {
             return 0
         fi
 
-        # CONFLICTING or still UNKNOWN after polling — rebase needed
+        # Still UNKNOWN after polling — keep waiting (do not rebase)
+        if [[ "$mergeable" == "UNKNOWN" ]]; then
+            log WARN "PR #$pr_num still UNKNOWN after polling — retrying (attempt $attempt/$max_retries)"
+            sleep 5
+            continue
+        fi
+
+        # CONFLICTING — rebase needed
         log WARN "PR not mergeable ($mergeable) — rebasing (attempt $attempt/$max_retries)"
+
+        local head_before
+        head_before=$(git -C "$repo_root" rev-parse HEAD)
 
         if ! _rebase_and_push "$repo_root" "$epic_num" "$short_name" "$title" "$events_log"; then
             return 1
+        fi
+
+        # If rebase was a no-op (HEAD unchanged), skip the push — already up-to-date
+        local head_after
+        head_after=$(git -C "$repo_root" rev-parse HEAD)
+        if [[ "$head_before" == "$head_after" ]]; then
+            log INFO "Rebase was a no-op — skipping redundant push"
         fi
 
         sleep 5

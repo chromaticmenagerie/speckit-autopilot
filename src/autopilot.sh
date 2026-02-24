@@ -425,6 +425,16 @@ run_epic() {
             log INFO "Working tree clean: $(git -C "$repo_root" status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted files"
 
             # Merge gate
+
+            # Safety push: ensure branch exists on remote before entering merge gate
+            local current_branch
+            current_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)
+            if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]]; then
+                log INFO "Safety push: pushing $current_branch to remote before merge gate"
+                if ! git -C "$repo_root" push -u origin "$current_branch" --no-verify 2>/dev/null; then
+                    log WARN "Safety push failed — continuing anyway (merge gate will push)"
+                fi
+            fi
             log INFO "Entering merge gate for epic $epic_num ($short_name)"
             if ! do_remote_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
                 return 1

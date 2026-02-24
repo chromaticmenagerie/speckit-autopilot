@@ -48,7 +48,7 @@ log() {
 
     # Write to log file
     if [[ -n "$AUTOPILOT_LOG" ]]; then
-        echo "$line" >> "$AUTOPILOT_LOG"
+        echo "$line" | sed 's/\x1b\[[0-9;]*m//g' >> "$AUTOPILOT_LOG"
     fi
 
     # Print to terminal with color
@@ -186,6 +186,17 @@ detect_state() {
     local epic_num="$2"
     local short_name="$3"
     local spec_dir="$repo_root/specs/$short_name"
+
+    # Validate short_name matches expected epic
+    if [[ -n "$epic_num" && -n "$short_name" ]]; then
+        local expected_prefix="${epic_num}-"
+        if [[ ! "$short_name" =~ ^${expected_prefix} ]]; then
+            log WARN "State detection: short_name '$short_name' doesn't match epic $epic_num — resetting to specify"
+            echo "specify"
+            return 0
+        fi
+    fi
+
 
     # No spec dir or no spec.md → need to specify
     if [[ -z "$short_name" ]] || [[ ! -f "$spec_dir/spec.md" ]]; then
@@ -470,16 +481,23 @@ load_project_config() {
 
 # ─── Merge Target Detection ──────────────────────────────────────────────────
 
-# Detect merge target branch: staging if it exists, otherwise BASE_BRANCH.
-# Convention-based — zero config.
+# Detect merge target branch: explicit override, then staging/test, then BASE_BRANCH.
 detect_merge_target() {
     local repo_root="${1:-.}"
-    if git -C "$repo_root" rev-parse --verify staging >/dev/null 2>&1 || \
-       git -C "$repo_root" rev-parse --verify origin/staging >/dev/null 2>&1; then
-        echo "staging"
-    else
-        echo "${BASE_BRANCH:-master}"
+    # Explicit override from environment / project.env
+    if [[ -n "${MERGE_TARGET_BRANCH:-}" ]]; then
+        echo "$MERGE_TARGET_BRANCH"
+        return
     fi
+    # Convention-based detection: check staging, then test
+    for branch in staging test; do
+        if git -C "$repo_root" rev-parse --verify "$branch" >/dev/null 2>&1 || \
+           git -C "$repo_root" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+            echo "$branch"
+            return
+        fi
+    done
+    echo "${BASE_BRANCH:-master}"
 }
 
 # ─── Verification ───────────────────────────────────────────────────────────

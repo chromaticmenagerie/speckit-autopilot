@@ -115,6 +115,21 @@ result="$(detect_merge_target "$repo")"
 assert_eq "master" "$result" "returns master when BASE_BRANCH unset and no staging"
 BASE_BRANCH="master"  # restore
 
+# ─── Test: detect_merge_target — env var override ──────────────────────────
+
+echo "Test: detect_merge_target — MERGE_TARGET_BRANCH env override"
+
+repo="$TMPDIR/repo-env-override"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" commit --allow-empty -m "init" -q
+git -C "$repo" branch staging  # staging exists but env var should win
+
+export MERGE_TARGET_BRANCH="custom-branch"
+result="$(detect_merge_target "$repo")"
+assert_eq "custom-branch" "$result" "returns MERGE_TARGET_BRANCH when set, even if staging exists"
+unset MERGE_TARGET_BRANCH
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""

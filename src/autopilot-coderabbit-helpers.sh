@@ -65,7 +65,9 @@ _count_cli_issues() {
     [[ -z "$output" ]] && echo "0" && return
     local count
     count=$(echo "$output" | grep -cE '^\s*[0-9]+\.|^\s*[-*]\s|^[^[:space:]]+:[0-9]+' || true)
-    echo "${count:-0}"
+    count="${count:-0}"
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    echo "$count"
 }
 
 # Count issues in PR review comments (separated by ---).

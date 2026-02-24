@@ -18,6 +18,7 @@ set -euo pipefail
 # ─── Accumulated Metrics ────────────────────────────────────────────────────
 
 _accumulated_cost=0
+_epic_cost=0
 _accumulated_input=0
 _accumulated_output=0
 _last_tool=""
@@ -41,6 +42,12 @@ process_stream() {
     _accumulated_input=0
     _accumulated_output=0
     _last_tool=""
+
+    # Read existing epic cost from status JSON if available
+    if [[ -n "${AUTOPILOT_STATUS_FILE:-}" && -f "$AUTOPILOT_STATUS_FILE" ]]; then
+        _epic_cost=$(jq -r '.epic_cost_usd // 0' "$AUTOPILOT_STATUS_FILE" 2>/dev/null || echo "0")
+        [[ "$_epic_cost" =~ ^[0-9.]+$ ]] || _epic_cost=0
+    fi
 
     # Emit phase_start event
     _emit_event "$events_log" "phase_start" \
@@ -309,11 +316,21 @@ _update_status() {
     local status_file="$1" epic="$2" phase="$3"
     local tmp="${status_file}.tmp"
 
-    # Include implement progress when in implement phase
+    # Include implement progress — preserve last-known from previous phases
     local impl_json="{}"
+    # Preserve last-known implement progress from previous phases
+    if [[ -n "${AUTOPILOT_STATUS_FILE:-}" && -f "$AUTOPILOT_STATUS_FILE" ]]; then
+        local existing_impl
+        existing_impl=$(jq -r '.implement_progress // "{}"' "$AUTOPILOT_STATUS_FILE" 2>/dev/null || echo "{}")
+        [[ "$existing_impl" != "null" && "$existing_impl" != "" ]] && impl_json="$existing_impl"
+    fi
     if [[ "$phase" == "implement" ]]; then
         impl_json=$(_get_impl_progress "$epic")
     fi
+
+    # Calculate cumulative epic cost
+    local _total_epic_cost
+    _total_epic_cost=$(echo "$_epic_cost + $_accumulated_cost" | bc 2>/dev/null || echo "$_accumulated_cost")
 
     jq -n \
         --arg epic "$epic" \
@@ -321,6 +338,7 @@ _update_status() {
         --arg ts "$(date -Iseconds)" \
         --arg tool "${_last_tool:-}" \
         --argjson cost "${_accumulated_cost:-0}" \
+        --argjson epic_cost "${_total_epic_cost:-0}" \
         --argjson ti "${_accumulated_input:-0}" \
         --argjson to "${_accumulated_output:-0}" \
         --argjson pid "$$" \
@@ -331,6 +349,7 @@ _update_status() {
             last_activity_at: $ts,
             last_tool: $tool,
             cost_usd: $cost,
+            epic_cost_usd: $epic_cost,
             tokens: {input: $ti, output: $to},
             pid: $pid,
             implement_progress: $impl

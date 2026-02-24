@@ -32,13 +32,28 @@ verify_tests() {
     LAST_TEST_OUTPUT=$(<"$tmpfile")
     rm -f "$tmpfile"
 
-    if [[ $rc -eq 0 ]]; then
-        log OK "Tests pass"
-        return 0
-    else
+    if [[ $rc -ne 0 ]]; then
         log ERROR "Tests failed"
         return 1
     fi
+
+    # Detect t.Skip() stubs in test files
+    local skip_files=""
+    skip_files=$(grep -rl 't\.Skip()' "$repo_root" --include='*_test.go' 2>/dev/null || true)
+    if [[ -n "$skip_files" ]]; then
+        local skip_count
+        skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
+        log WARN "Found $skip_count test file(s) with t.Skip() stubs:"
+        echo "$skip_files" | while read -r f; do
+            log WARN "  - $f"
+        done
+        # Write skip info for the review/implement phase to pick up
+        echo "$skip_files" > "$repo_root/.specify/logs/skipped-tests.txt"
+        log WARN "Skipped test list written to .specify/logs/skipped-tests.txt"
+    fi
+
+    log OK "Tests pass"
+    return 0
 }
 
 # Verify linting passes. Returns 0 on success, 1 on failure.

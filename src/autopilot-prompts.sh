@@ -407,6 +407,7 @@ All implementation tasks are complete. Perform a senior code review.
    - Observability (structured logging per constitution principles)
    - No hardcoded paths or credentials
    - No print() / console.log debug output (use proper logging)
+   - Integration tests containing t.Skip() are CRITICAL findings. These are stubs that must be implemented, not dismissed. Report each skipped test file as a separate CRITICAL issue.
    - Design fidelity (if specs/${short_name}/design-context.md exists):
      * Theme config file exists mapping ALL design tokens to CSS variables or Tailwind theme
      * Design token audit: spot-check 3-5 component/page files for raw hex color values
@@ -589,11 +590,10 @@ ${review_output}
 Instructions:
 1. Read each issue carefully — understand the file and line referenced.
 2. Read the relevant source files.
-3. Fix every issue. Prioritize:
-   - Security issues (CRITICAL)
-   - Logic bugs (HIGH)
-   - Best practice violations (MEDIUM)
-   - Style/convention issues (LOW)
+3. Fix all CRITICAL and HIGH severity issues — these are mandatory.
+   For MEDIUM issues: fix only if straightforward (< 5 lines changed).
+   For LOW issues: do NOT fix them. Log them as accepted tech debt in a brief code comment if appropriate.
+   Focus your effort on the issues that matter most.
 4. After fixing, verify:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
 $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
