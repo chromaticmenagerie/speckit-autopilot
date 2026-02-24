@@ -37,19 +37,21 @@ verify_tests() {
         return 1
     fi
 
-    # Detect t.Skip() stubs in test files
+    # Detect t.Skip() / t.Skipf() / t.SkipNow() stubs in test files
     local skip_files=""
-    skip_files=$(grep -rl 't\.Skip()' "$repo_root" --include='*_test.go' 2>/dev/null || true)
+    skip_files=$(grep -rlE 't\.Skip(f|Now)?\(' "$repo_root/$PROJECT_WORK_DIR" --include='*_test.go' --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=third_party 2>/dev/null || true)
     if [[ -n "$skip_files" ]]; then
         local skip_count
         skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
-        log WARN "Found $skip_count test file(s) with t.Skip() stubs:"
+        log ERROR "Found $skip_count test file(s) with t.Skip() stubs:"
         echo "$skip_files" | while read -r f; do
-            log WARN "  - $f"
+            log ERROR "  - $f"
         done
         # Write skip info for the review/implement phase to pick up
+        mkdir -p "$repo_root/.specify/logs"
         echo "$skip_files" > "$repo_root/.specify/logs/skipped-tests.txt"
-        log WARN "Skipped test list written to .specify/logs/skipped-tests.txt"
+        log ERROR "Skipped test list written to .specify/logs/skipped-tests.txt"
+        return 1
     fi
 
     log OK "Tests pass"

@@ -46,7 +46,7 @@ process_stream() {
     # Read existing epic cost from status JSON if available
     if [[ -n "${AUTOPILOT_STATUS_FILE:-}" && -f "$AUTOPILOT_STATUS_FILE" ]]; then
         _epic_cost=$(jq -r '.epic_cost_usd // 0' "$AUTOPILOT_STATUS_FILE" 2>/dev/null || echo "0")
-        [[ "$_epic_cost" =~ ^[0-9.]+$ ]] || _epic_cost=0
+        [[ "$_epic_cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || _epic_cost=0
     fi
 
     # Emit phase_start event
@@ -321,7 +321,7 @@ _update_status() {
     # Preserve last-known implement progress from previous phases
     if [[ -n "${AUTOPILOT_STATUS_FILE:-}" && -f "$AUTOPILOT_STATUS_FILE" ]]; then
         local existing_impl
-        existing_impl=$(jq -r '.implement_progress // "{}"' "$AUTOPILOT_STATUS_FILE" 2>/dev/null || echo "{}")
+        existing_impl=$(jq -c '.implement_progress // {}' "$AUTOPILOT_STATUS_FILE" 2>/dev/null || echo "{}")
         [[ "$existing_impl" != "null" && "$existing_impl" != "" ]] && impl_json="$existing_impl"
     fi
     if [[ "$phase" == "implement" ]]; then
@@ -330,7 +330,7 @@ _update_status() {
 
     # Calculate cumulative epic cost
     local _total_epic_cost
-    _total_epic_cost=$(echo "$_epic_cost + $_accumulated_cost" | bc 2>/dev/null || echo "$_accumulated_cost")
+    _total_epic_cost=$(awk "BEGIN {printf \"%.6f\", ${_epic_cost:-0} + ${_accumulated_cost:-0}}")
 
     jq -n \
         --arg epic "$epic" \
