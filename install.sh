@@ -104,6 +104,10 @@ else
     info "Fresh install: v${NEW_VERSION}"
 fi
 
+# ─── Step 3b: Ensure Design/Pencil Files directory exists ───────────────────
+
+mkdir -p "Design/Pencil Files"
+
 # ─── Step 4: Copy script files ──────────────────────────────────────────────
 
 DEST=".specify/scripts/bash"
@@ -172,6 +176,7 @@ echo -e "${BOLD}║${RESET}  Skill:  /autopilot (in .claude/skills/autopilot/)"
 echo -e "${BOLD}║${RESET}  Config: .specify/project.env (review and adjust)"
 echo -e "${BOLD}║${RESET}"
 echo -e "${BOLD}║${RESET}  Next: Create epics in docs/specs/epics/"
+echo -e "${BOLD}║${RESET}        Place .pen designs in Design/Pencil Files/"
 echo -e "${BOLD}║${RESET}        then run /autopilot"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
 echo ""

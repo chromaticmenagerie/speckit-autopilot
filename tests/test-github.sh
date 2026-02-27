@@ -45,6 +45,7 @@ mkdir -p "$TMPDIR/repo/.specify/logs"
 mkdir -p "$TMPDIR/repo/.specify/scripts/bash"
 mkdir -p "$TMPDIR/repo/specs/003-auth"
 mkdir -p "$TMPDIR/repo/docs/specs/epics"
+mkdir -p "$TMPDIR/repo/Design/Pencil Files"
 
 # Init git repo with remote
 git -C "$TMPDIR/repo" init -q
