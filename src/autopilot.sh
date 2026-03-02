@@ -353,6 +353,68 @@ _accumulate_phase_cost() {
     fi
 }
 
+# ─── Prefix Self-Healing ───────────────────────────────────────────────────
+
+# Rename branch + specs dir when the numeric prefix doesn't match the epic number.
+# Usage: _correct_prefix repo_root epic_num wrong_name
+# Outputs the corrected name on stdout. No-op if prefix already matches.
+_correct_prefix() {
+    local repo_root="$1" epic_num="$2" branch_name="$3"
+    local expected_prefix="${epic_num}-"
+
+    # Already correct — pass through
+    if [[ "$branch_name" =~ ^${expected_prefix} ]]; then
+        echo "$branch_name"
+        return 0
+    fi
+
+    # Extract suffix (everything after first dash)
+    local suffix="${branch_name#*-}"
+    if [[ -z "$suffix" || "$suffix" == "$branch_name" ]]; then
+        log ERROR "Cannot correct prefix: branch '$branch_name' has no valid suffix"
+        echo "$branch_name"
+        return 1
+    fi
+
+    local correct_name="${epic_num}-${suffix}"
+    log WARN "Prefix mismatch: '${branch_name}' but epic requires '${expected_prefix}*' — renaming to '${correct_name}'"
+
+    # 1. Rename specs directory (if it exists)
+    if [[ -d "$repo_root/specs/$branch_name" ]]; then
+        if [[ -d "$repo_root/specs/$correct_name" ]]; then
+            log WARN "Target dir specs/$correct_name already exists — removing stale copy"
+            rm -rf "$repo_root/specs/$correct_name"
+        fi
+        mv "$repo_root/specs/$branch_name" "$repo_root/specs/$correct_name"
+        log INFO "Renamed specs dir: $branch_name → $correct_name"
+    fi
+
+    # 2. Rename git branch
+    local current_branch
+    current_branch=$(git -C "$repo_root" branch --show-current 2>/dev/null || echo "")
+    if [[ "$current_branch" == "$branch_name" ]] || git -C "$repo_root" show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
+        # Remove destination branch if it exists (stale from previous failed run)
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$correct_name" 2>/dev/null; then
+            if [[ "$current_branch" == "$correct_name" ]]; then
+                log WARN "Already on $correct_name — skipping branch rename"
+            else
+                log WARN "Target branch $correct_name already exists — deleting stale branch"
+                git -C "$repo_root" branch -D "$correct_name" >/dev/null 2>&1 || true
+            fi
+        fi
+        git -C "$repo_root" branch -m "$branch_name" "$correct_name" >/dev/null 2>&1 || true
+        log INFO "Renamed branch: $branch_name → $correct_name"
+    fi
+
+    # 3. Commit only the rename (explicit paths, not -A)
+    git -C "$repo_root" add "specs/$correct_name" >/dev/null 2>&1 || true
+    git -C "$repo_root" rm -r --cached "specs/$branch_name" >/dev/null 2>&1 || true
+    git -C "$repo_root" commit -m "chore(${epic_num}): fix feature prefix ${branch_name} → ${correct_name}" --allow-empty >/dev/null 2>&1 || true
+
+    echo "$correct_name"
+    return 0
+}
+
 # ─── Main Epic Loop ─────────────────────────────────────────────────────────
 
 run_epic() {
@@ -472,6 +534,8 @@ run_epic() {
                     actual_branch=$(git -C "$repo_root" branch --show-current 2>/dev/null || echo "")
                     if [[ -n "$actual_branch" ]] && [[ "$actual_branch" != "$BASE_BRANCH" ]] && [[ "$actual_branch" != "$short_name" ]]; then
                         log INFO "Branch mismatch: YAML=$short_name, actual=$actual_branch — correcting"
+                        # Correct prefix if it doesn't match the epic number
+                        actual_branch="$(_correct_prefix "$repo_root" "$epic_num" "$actual_branch")"
                         short_name="$actual_branch"
                         if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
                             sed "s/^branch:.*/branch: $short_name/" "$epic_file" > "${epic_file}.tmp" && mv "${epic_file}.tmp" "$epic_file"
@@ -493,6 +557,8 @@ run_epic() {
                             done
                         fi
                         if $_found || [[ -n "$short_name" ]]; then
+                            # Correct prefix before using the name
+                            short_name="$(_correct_prefix "$repo_root" "$epic_num" "$short_name")"
                             log INFO "Spec dir created: $short_name"
                             ensure_feature_branch "$repo_root" "$short_name"
                             if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
