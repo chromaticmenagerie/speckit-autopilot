@@ -53,12 +53,12 @@ log() {
 
     # Print to terminal with color
     case "$level" in
-        INFO)  echo -e "${BLUE}[autopilot]${RESET} $msg" ;;
-        OK)    echo -e "${GREEN}[autopilot]${RESET} $msg" ;;
-        WARN)  echo -e "${YELLOW}[autopilot]${RESET} $msg" ;;
-        ERROR) echo -e "${RED}[autopilot]${RESET} $msg" ;;
-        PHASE) echo -e "${CYAN}${BOLD}[autopilot]${RESET} ${BOLD}$msg${RESET}" ;;
-        *)     echo -e "[autopilot] $msg" ;;
+        INFO)  echo -e "${BLUE}[autopilot]${RESET} $msg" >&2 ;;
+        OK)    echo -e "${GREEN}[autopilot]${RESET} $msg" >&2 ;;
+        WARN)  echo -e "${YELLOW}[autopilot]${RESET} $msg" >&2 ;;
+        ERROR) echo -e "${RED}[autopilot]${RESET} $msg" >&2 ;;
+        PHASE) echo -e "${CYAN}${BOLD}[autopilot]${RESET} ${BOLD}$msg${RESET}" >&2 ;;
+        *)     echo -e "[autopilot] $msg" >&2 ;;
     esac
 }
 
