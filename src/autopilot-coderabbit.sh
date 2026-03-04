@@ -296,6 +296,15 @@ _rebase_and_push() {
         fi
     fi
 
+    # Verify build passes after rebase
+    if [[ -n "${PROJECT_BUILD_CMD:-}" ]]; then
+        if ! verify_build "$repo_root"; then
+            log ERROR "Build failed — aborting merge"
+            log ERROR "Output: $LAST_BUILD_OUTPUT"
+            return 1
+        fi
+    fi
+
     # Push
     log INFO "Pushing $short_name to origin"
     local push_output

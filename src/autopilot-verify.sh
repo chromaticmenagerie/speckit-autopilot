@@ -12,6 +12,7 @@ set -euo pipefail
 # Last captured test/lint output (set by verify_* functions for finalize prompts)
 LAST_TEST_OUTPUT=""
 LAST_LINT_OUTPUT=""
+LAST_BUILD_OUTPUT=""
 
 # Verify that tests pass. Returns 0 on success, 1 on failure.
 # Side effect: sets LAST_TEST_OUTPUT with the captured output.
@@ -82,6 +83,34 @@ verify_lint() {
         return 0
     else
         log ERROR "Lint issues found"
+        return 1
+    fi
+}
+
+# Verify that the project builds. Returns 0 on success, 1 on failure.
+# Side effect: sets LAST_BUILD_OUTPUT with the captured output.
+verify_build() {
+    local repo_root="$1"
+
+    if [[ -z "$PROJECT_BUILD_CMD" ]]; then
+        log INFO "No build command configured — skipping"
+        LAST_BUILD_OUTPUT=""
+        return 0
+    fi
+
+    log INFO "Running build: $PROJECT_BUILD_CMD"
+    local tmpfile
+    tmpfile=$(mktemp)
+    local rc=0
+    (cd "$repo_root/$PROJECT_WORK_DIR" && eval "$PROJECT_BUILD_CMD") > "$tmpfile" 2>&1 || rc=$?
+    LAST_BUILD_OUTPUT=$(<"$tmpfile")
+    rm -f "$tmpfile"
+
+    if [[ $rc -eq 0 ]]; then
+        log OK "Build clean"
+        return 0
+    else
+        log WARN "Build failed"
         return 1
     fi
 }

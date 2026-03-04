@@ -28,6 +28,7 @@ run_finalize() {
     local max_fix_rounds=3
     local round=0
     local tests_ok=false
+    local build_ok=false
     local lint_ok=false
 
     while [[ $round -lt $max_fix_rounds ]]; do
@@ -41,6 +42,13 @@ run_finalize() {
             tests_ok=false
         fi
 
+        # Run build
+        if verify_build "$repo_root"; then
+            build_ok=true
+        else
+            build_ok=false
+        fi
+
         # Run lint
         if verify_lint "$repo_root"; then
             lint_ok=true
@@ -49,8 +57,8 @@ run_finalize() {
         fi
 
         # If both pass, break
-        if $tests_ok && $lint_ok; then
-            log OK "Tests and lint pass on $BASE_BRANCH"
+        if $tests_ok && $build_ok && $lint_ok; then
+            log OK "Tests, build, and lint pass on $BASE_BRANCH"
             break
         fi
 

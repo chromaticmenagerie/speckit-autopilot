@@ -110,6 +110,7 @@ detect_node() {
     if [[ -f "$REPO_ROOT/package.json" ]]; then
         TEST_CMD="npm test"
         LINT_CMD="npm run lint"
+        grep -q '"check"' "$REPO_ROOT/package.json" 2>/dev/null && BUILD_CMD="npm run check"
         PREFLIGHT_TOOLS="eslint"
         return 0
     fi
@@ -221,6 +222,11 @@ detect_coderabbit_cli && HAS_CODERABBIT="true"
 detect_remote && HAS_REMOTE="true"
 detect_gh_cli && HAS_GH_CLI="true"
 
+HAS_FRONTEND="false"
+if find "$REPO_ROOT" -maxdepth 4 \( -name '*.svelte' -o -name '*.jsx' -o -name '*.tsx' -o -name '*.vue' \) 2>/dev/null | grep -q .; then
+    HAS_FRONTEND="true"
+fi
+
 # ─── Write ───────────────────────────────────────────────────────────────────
 
 mkdir -p "$(dirname "$ENV_FILE")"
@@ -257,6 +263,9 @@ HAS_REMOTE="$HAS_REMOTE"
 # GitHub CLI (gh) available and authenticated (auto-detected).
 HAS_GH_CLI="$HAS_GH_CLI"
 
+# Frontend framework detected (auto-detected).
+HAS_FRONTEND="$HAS_FRONTEND"
+
 # Force-advance past CodeRabbit CLI review failures instead of halting.
 # Set to "true" to keep the old behavior (always advance). Default: "false" (halt on failure).
 FORCE_ADVANCE_ON_REVIEW_FAIL="false"
@@ -281,6 +290,7 @@ echo "  BASE_BRANCH: $BASE_BRANCH"
 echo "  CODERABBIT: ${HAS_CODERABBIT}"
 echo "  REMOTE:     ${HAS_REMOTE}"
 echo "  GH_CLI:     ${HAS_GH_CLI}"
+echo "  HAS_FRONTEND=$HAS_FRONTEND"
 echo "  PREFLIGHT:  ${PREFLIGHT_TOOLS:-"(none)"}"
 echo ""
 echo "Review and adjust as needed, then commit to git."
