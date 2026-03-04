@@ -243,7 +243,11 @@ detect_state() {
 
     # Tasks exist but not analyzed yet — iterative analysis until zero findings
     if ! grep -q '<!-- ANALYZED -->' "$spec_dir/tasks.md" 2>/dev/null; then
-        echo "analyze"
+        if grep -q '<!-- FIXES APPLIED -->' "$spec_dir/tasks.md" 2>/dev/null; then
+            echo "analyze-verify"
+        else
+            echo "analyze"
+        fi
         return
     fi
 
@@ -263,6 +267,8 @@ detect_state() {
         # All tasks done — check if already merged
         if is_epic_merged "$repo_root" "$short_name"; then
             echo "done"
+        elif ! grep -q '<!-- SECURITY_REVIEWED -->' "$spec_dir/tasks.md" 2>/dev/null; then
+            echo "security-review"
         else
             echo "review"
         fi
@@ -303,7 +309,9 @@ get_current_impl_phase() {
 count_phases() {
     local tasks_file="$1"
     [[ ! -f "$tasks_file" ]] && echo "0" && return
-    grep -c '^##[#]*\ *Phase\ [0-9]' "$tasks_file" 2>/dev/null || echo "0"
+    local count
+    count=$(grep -c '^##[#]*\ *Phase\ [0-9]' "$tasks_file" 2>/dev/null) || count=0
+    echo "$count"
 }
 
 # Count incomplete tasks in a specific phase.
@@ -400,15 +408,40 @@ write_epic_summary() {
     # Build per-phase table from events.jsonl
     local phase_table=""
     if [[ -f "$events_log" ]]; then
+        # Group phase_end events by phase name
+        declare -A _phase_cost=() _phase_dur=() _phase_rounds=()
+        local _phase_order=()
+
         while IFS= read -r event_line; do
             local phase dur cost
             phase=$(echo "$event_line" | jq -r '.phase')
             dur=$(echo "$event_line" | jq '.duration_ms // 0')
             cost=$(echo "$event_line" | jq '.cost_usd // 0')
-            local dur_min
-            dur_min=$(echo "$dur" | awk '{printf "%.1f", $1/60000}')
-            phase_table+="| $phase | ${dur_min}m | \$${cost} |"$'\n'
+
+            # Track first-seen order
+            if [[ -z "${_phase_cost[$phase]+x}" ]]; then
+                _phase_order+=("$phase")
+                _phase_cost[$phase]=0
+                _phase_dur[$phase]=0
+                _phase_rounds[$phase]=0
+            fi
+
+            _phase_cost[$phase]=$(echo "${_phase_cost[$phase]} + $cost" | bc)
+            _phase_dur[$phase]=$(echo "${_phase_dur[$phase]} + $dur" | bc)
+            _phase_rounds[$phase]=$(( ${_phase_rounds[$phase]} + 1 ))
         done < <(jq -c "select(.event==\"phase_end\" and .epic==\"$epic_num\")" "$events_log" 2>/dev/null)
+
+        # Build grouped table
+        for phase in "${_phase_order[@]}"; do
+            local dur_min rounds
+            dur_min=$(echo "${_phase_dur[$phase]}" | awk '{printf "%.1f", $1/60000}')
+            rounds="${_phase_rounds[$phase]}"
+            local round_col=""
+            if [[ "$rounds" -gt 1 ]]; then
+                round_col=" (×${rounds})"
+            fi
+            phase_table+="| ${phase}${round_col} | ${dur_min}m | \$${_phase_cost[$phase]} |"$'\n'
+        done
     fi
 
     cat > "$summary_file" <<SUMMARY
