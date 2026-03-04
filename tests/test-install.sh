@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+EXPECTED_VERSION=$(<"$REPO_ROOT/VERSION")
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -72,7 +73,7 @@ assert "autopilot-prompts.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash
 assert "autopilot-detect-project.sh installed" "[[ -f '$TEST1_DIR/.specify/scripts/bash/autopilot-detect-project.sh' ]]"
 assert "skill file installed" "[[ -f '$TEST1_DIR/.claude/skills/autopilot/SKILL.md' ]]"
 assert "version marker written" "[[ -f '$TEST1_DIR/.specify/autopilot-version' ]]"
-assert "version is 0.2.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.2.0' ]]"
+assert "version is ${EXPECTED_VERSION}" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '${EXPECTED_VERSION}' ]]"
 assert "project.env generated" "[[ -f '$TEST1_DIR/.specify/project.env' ]]"
 assert "project.env has BASE_BRANCH" "grep -q 'BASE_BRANCH=' '$TEST1_DIR/.specify/project.env'"
 assert "scripts are executable" "[[ -x '$TEST1_DIR/.specify/scripts/bash/autopilot.sh' ]]"
@@ -96,7 +97,7 @@ echo "0.0.1" > "$TEST1_DIR/.specify/autopilot-version"
 OUTPUT3=$(cd "$TEST1_DIR" && bash "$REPO_ROOT/install.sh" 2>&1)
 
 assert "says upgrading" "echo '$OUTPUT3' | grep -q 'Upgrading'"
-assert "version updated to 0.2.0" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '0.2.0' ]]"
+assert "version updated to ${EXPECTED_VERSION}" "[[ \"\$(cat '$TEST1_DIR/.specify/autopilot-version')\" == '${EXPECTED_VERSION}' ]]"
 
 # ─── Test 4: Fails without Spec Kit ─────────────────────────────────────────
 
