@@ -300,8 +300,8 @@ _get_impl_progress() {
         local cur total inc comp
         cur=$(get_current_impl_phase "$tasks_file")
         total=$(count_phases "$tasks_file")
-        inc=$(grep -c '^\- \[ \]' "$tasks_file" 2>/dev/null || echo 0)
-        comp=$(grep -c '^\- \[x\]' "$tasks_file" 2>/dev/null || echo 0)
+        inc=$(grep -c '^\- \[ \]' "$tasks_file" 2>/dev/null) || inc=0
+        comp=$(grep -c '^\- \[x\]' "$tasks_file" 2>/dev/null) || comp=0
         _impl_progress_cache=$(jq -nc \
             --argjson cp "${cur:-0}" --argjson tp "${total:-0}" \
             --argjson ic "${inc:-0}" --argjson cc "${comp:-0}" \
