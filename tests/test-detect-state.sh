@@ -92,6 +92,75 @@ echo "Test: empty short_name returns 'specify'"
 state=$(detect_state "$repo2" "003" "" 2>/dev/null)
 assert_eq "specify" "$state" "empty short_name returns specify"
 
+# ─── Test: all tasks complete, no security marker → "security-review" ─────
+
+echo "Test: all tasks complete, no security marker returns 'security-review'"
+
+repo3="$TMPDIR/repo-security"
+mkdir -p "$repo3/specs/003-secure-feat"
+echo "# spec" > "$repo3/specs/003-secure-feat/spec.md"
+echo -e "<!-- CLARIFY_COMPLETE -->\n<!-- CLARIFY_VERIFIED -->" >> "$repo3/specs/003-secure-feat/spec.md"
+echo "# plan" > "$repo3/specs/003-secure-feat/plan.md"
+cat > "$repo3/specs/003-secure-feat/tasks.md" << 'TASKS'
+## Phase 1
+- [x] Task one
+- [x] Task two
+
+<!-- ANALYZED -->
+TASKS
+git -C "$repo3" init -q
+git -C "$repo3" commit --allow-empty -m "init" -q
+
+state=$(detect_state "$repo3" "003" "003-secure-feat" 2>/dev/null)
+assert_eq "security-review" "$state" "all tasks complete, no security marker → security-review"
+
+# ─── Test: all tasks complete, security marker present → "review" ─────────
+
+echo "Test: all tasks complete, security marker present returns 'review'"
+
+repo4="$TMPDIR/repo-security-done"
+mkdir -p "$repo4/specs/003-secure-done"
+echo "# spec" > "$repo4/specs/003-secure-done/spec.md"
+echo -e "<!-- CLARIFY_COMPLETE -->\n<!-- CLARIFY_VERIFIED -->" >> "$repo4/specs/003-secure-done/spec.md"
+echo "# plan" > "$repo4/specs/003-secure-done/plan.md"
+cat > "$repo4/specs/003-secure-done/tasks.md" << 'TASKS'
+## Phase 1
+- [x] Task one
+- [x] Task two
+
+<!-- ANALYZED -->
+<!-- SECURITY_REVIEWED -->
+TASKS
+git -C "$repo4" init -q
+git -C "$repo4" commit --allow-empty -m "init" -q
+
+state=$(detect_state "$repo4" "003" "003-secure-done" 2>/dev/null)
+assert_eq "review" "$state" "all tasks complete, security marker present → review"
+
+# ─── Test: all tasks complete, force-skipped marker → "review" ────────────
+
+echo "Test: all tasks complete, force-skipped marker returns 'review'"
+
+repo5="$TMPDIR/repo-security-skipped"
+mkdir -p "$repo5/specs/003-secure-skip"
+echo "# spec" > "$repo5/specs/003-secure-skip/spec.md"
+echo -e "<!-- CLARIFY_COMPLETE -->\n<!-- CLARIFY_VERIFIED -->" >> "$repo5/specs/003-secure-skip/spec.md"
+echo "# plan" > "$repo5/specs/003-secure-skip/plan.md"
+cat > "$repo5/specs/003-secure-skip/tasks.md" << 'TASKS'
+## Phase 1
+- [x] Task one
+- [x] Task two
+
+<!-- ANALYZED -->
+<!-- SECURITY_REVIEWED -->
+<!-- SECURITY_FORCE_SKIPPED -->
+TASKS
+git -C "$repo5" init -q
+git -C "$repo5" commit --allow-empty -m "init" -q
+
+state=$(detect_state "$repo5" "003" "003-secure-skip" 2>/dev/null)
+assert_eq "review" "$state" "all tasks complete, force-skipped marker → review"
+
 # ─── Results ────────────────────────────────────────────────────────────────
 
 echo ""

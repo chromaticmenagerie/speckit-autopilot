@@ -95,6 +95,7 @@ assert_eq "In Progress" "$(_gh_phase_to_status finalize-fix)"    "finalize-fix �
 assert_eq "In Progress" "$(_gh_phase_to_status finalize-review)" "finalize-review → In Progress"
 assert_eq "In Progress" "$(_gh_phase_to_status crystallize)"     "crystallize → In Progress"
 assert_eq "Done"        "$(_gh_phase_to_status done)"            "done → Done"
+assert_eq "In Progress" "$(_gh_phase_to_status security-review)" "security-review → In Progress"
 assert_eq "Todo"        "$(_gh_phase_to_status unknown)"         "unknown → Todo"
 
 # ─── Test: gh_try ───────────────────────────────────────────────────────────
