@@ -52,6 +52,7 @@ declare -A PHASE_MODEL=(
     [finalize-review]="$OPUS"
     [coderabbit-fix]="$OPUS"
     [conflict-resolve]="$OPUS"
+    [security-review]="$OPUS"
 )
 
 # Phase → allowed tools
@@ -71,6 +72,7 @@ declare -A PHASE_TOOLS=(
     [finalize-review]="Read,Write,Edit,Bash,Glob,Grep"
     [coderabbit-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
+    [security-review]="Read,Glob,Grep"
 )
 
 # Phase → max retries (convergence phases get more attempts)
@@ -90,6 +92,7 @@ declare -A PHASE_MAX_RETRIES=(
     [finalize-review]=1
     [coderabbit-fix]=3
     [conflict-resolve]=3
+    [security-review]=3
 )
 
 # ─── Argument Parsing ────────────────────────────────────────────────────────
@@ -109,6 +112,19 @@ parse_args() {
             --silent)           SILENT=true ;;
             --no-github)        NO_GITHUB=true ;;
             --github-resync)    GITHUB_RESYNC=true ;;
+            --skip)
+                shift
+                local skip_phase="$1"
+                case "$skip_phase" in
+                    clarify|clarify-verify|design-read|analyze) ;;
+                    *) echo "ERROR: Cannot skip phase '$skip_phase'. Allowed: clarify, clarify-verify, design-read, analyze" >&2; exit 1 ;;
+                esac
+                PHASE_MAX_RETRIES[$skip_phase]=0
+                ;;
+            --fast)
+                PHASE_MAX_RETRIES[clarify]=1
+                PHASE_MAX_RETRIES[analyze]=1
+                ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -117,6 +133,8 @@ parse_args() {
                 echo "  --no-auto-continue   Pause between epics instead of auto-continuing"
                 echo "  --dry-run            Show what would happen without invoking claude"
                 echo "  --silent             Suppress live dashboard output (files still written)"
+                echo "  --skip PHASE    Skip a convergence phase (clarify, clarify-verify, design-read, analyze)"
+                echo "  --fast          Reduce convergence phases to 1 attempt (faster iteration)"
                 echo "  --no-github          Disable GitHub Projects sync"
                 echo "  --github-resync      Resync all epics to GitHub Projects and exit"
                 exit 0
@@ -233,6 +251,9 @@ run_phase() {
         crystallize)
             prompt="$(prompt_crystallize "$epic_num" "$title" "$repo_root" "$short_name")"
             ;;
+        security-review)
+            prompt="$(prompt_security_review "$epic_num" "$title" "$repo_root" "$short_name")"
+            ;;
         *)
             log ERROR "Unknown phase: $phase"
             return 1
@@ -297,6 +318,14 @@ do_merge() {
             return 1
         fi
         log OK "Tests pass — proceeding with merge"
+    fi
+
+    if [[ -n "${PROJECT_BUILD_CMD:-}" ]]; then
+        if ! verify_build "$repo_root"; then
+            log ERROR "Build failed — aborting merge"
+            log ERROR "Output: $LAST_BUILD_OUTPUT"
+            return 1
+        fi
     fi
 
     if [[ -n "${PROJECT_LINT_CMD:-}" ]]; then
@@ -442,6 +471,11 @@ run_epic() {
         '{epic:$e, phase:$p, model:$m, title:$t, cost_usd:0, tokens_in:0, tokens_out:0, iteration:0}' \
         > "$_status_file"
 
+    # Correct prefix before state detection (self-healing)
+    if [[ -n "$short_name" ]]; then
+        short_name="$(_correct_prefix "$repo_root" "$epic_num" "$short_name")"
+    fi
+
     # Ensure correct branch (skip for specify — it creates the branch)
     local state
     state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
@@ -451,7 +485,17 @@ run_epic() {
     fi
 
     # Phase loop
+    local total_iterations=0
+    local MAX_TOTAL_ITERATIONS=30
+
     while true; do
+        total_iterations=$((total_iterations + 1))
+        if [[ $total_iterations -gt $MAX_TOTAL_ITERATIONS ]]; then
+            log ERROR "Epic $epic_num exceeded $MAX_TOTAL_ITERATIONS total phase iterations — possible oscillation. Stopping."
+            log ERROR "Resume with: ./autopilot.sh $epic_num"
+            return 1
+        fi
+
         state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
         log INFO "Detected state: $state"
 
@@ -585,7 +629,7 @@ run_epic() {
                 else
                     retries=$((retries + 1))
                     # Iterative phases: log as "rounds" not "retries"
-                    if [[ "$state" == "clarify" || "$state" == "analyze" ]]; then
+                    if [[ "$state" == "clarify" || "$state" == "analyze" || "$state" == "analyze-verify" ]]; then
                         log INFO "${state^} round $retries/${PHASE_MAX_RETRIES[$state]:-5} — observations remain, re-running in fresh context"
                     else
                         log WARN "Phase $state did not advance (attempt $((retries))/${PHASE_MAX_RETRIES[$state]:-3}, exit=$phase_exit)"
@@ -629,10 +673,35 @@ run_epic() {
                 _accumulate_phase_cost "$repo_root"
                 continue
             elif [[ "$state" == "analyze" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
-                log WARN "Analyze: max $retries rounds reached — forcing advance to implement"
-                echo -e "\n<!-- ANALYZED -->" >> "$spec_dir/tasks.md"
+                log WARN "Analyze: max $retries rounds reached — forcing advance to verify"
+                if ! grep -q '<!-- FIXES APPLIED -->' "$spec_dir/tasks.md"; then
+                    echo -e "\n<!-- FIXES APPLIED -->" >> "$spec_dir/tasks.md"
+                fi
                 git -C "$repo_root" add "$spec_dir/tasks.md" && \
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance analyze after ${retries} rounds" 2>/dev/null || true
+                _accumulate_phase_cost "$repo_root"
+                continue
+            elif [[ "$state" == "analyze-verify" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
+                log WARN "Analyze-verify: max $retries attempts — forcing advance to implement"
+                # Remove FIXES APPLIED marker using portable sed
+                sed '/<!-- FIXES APPLIED -->/d' "$spec_dir/tasks.md" > "$spec_dir/tasks.md.tmp" && \
+                mv "$spec_dir/tasks.md.tmp" "$spec_dir/tasks.md"
+                if ! grep -q '<!-- ANALYZED -->' "$spec_dir/tasks.md"; then
+                    echo -e "\n<!-- ANALYZED -->" >> "$spec_dir/tasks.md"
+                fi
+                git -C "$repo_root" add "$spec_dir/tasks.md" && \
+                git -C "$repo_root" commit -m "chore(${epic_num}): force-advance analyze-verify after ${retries} attempts" 2>/dev/null || true
+                _accumulate_phase_cost "$repo_root"
+                continue
+            elif [[ "$state" == "security-review" ]]; then
+                log WARN "Security review stuck — force-advancing (security was NOT fully verified)"
+                local _tasks_file="${spec_dir}/tasks.md"
+                if [[ -f "$_tasks_file" ]]; then
+                    echo "" >> "$_tasks_file"
+                    echo "<!-- SECURITY_REVIEWED -->" >> "$_tasks_file"
+                    echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$_tasks_file"
+                    (cd "$repo_root" && git add "$_tasks_file" && git commit -m "security-review(${epic_num}): force-skipped")
+                fi
                 _accumulate_phase_cost "$repo_root"
                 continue
             fi
