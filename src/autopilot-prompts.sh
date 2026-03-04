@@ -38,6 +38,10 @@ If the skill asks clarification questions, answer them AUTONOMOUSLY:
 - Never ask the user — decide based on the available context
 
 After the skill completes, verify that spec.md was created in the specs/ directory.
+
+When the skill creates a feature branch, ensure it uses the epic number ${epic_num}
+as the branch prefix (e.g., ${epic_num}-feature-name). This is required for the
+orchestrator's state detection to work correctly.
 EOF
 }
 
@@ -102,6 +106,8 @@ Read ${spec_dir}/spec.md carefully. Check for:
 - Undefined error handling behaviour
 - Missing edge cases for key requirements
 - Requirements that conflict with .specify/memory/constitution.md principles
+- For any regex pattern in the spec, verify it includes 3+ test strings showing expected match/no-match behavior
+- For any validation rule with pattern matching, verify concrete examples are provided
 
 If the spec is COMPREHENSIVE (zero significant issues found):
   1. Append this exact marker at the END of spec.md on its own line:
@@ -177,6 +183,11 @@ Invoke the Skill tool ONCE:
 
 Review the analysis report carefully.
 
+Additionally, check all spec artifacts for regex patterns:
+- For any regex in spec.md, plan.md, or tasks.md, ensure 3+ test strings
+  are provided showing expected match/no-match behavior
+- If regex patterns lack test cases, add them as a finding to fix
+
 If ZERO issues are found (no CRITICAL, HIGH, MEDIUM, or LOW findings):
   1. Append this exact marker at the END of tasks.md on its own line:
      <!-- ANALYZED -->
@@ -187,7 +198,9 @@ If ZERO issues are found (no CRITICAL, HIGH, MEDIUM, or LOW findings):
 If ANY issues are found:
   1. Fix ALL issues in the artifacts (spec.md, plan.md, tasks.md) directly
   2. Do NOT add <!-- ANALYZED -->
-  3. Commit fixes:
+  3. Append this exact marker at the END of tasks.md on its own line:
+     <!-- FIXES APPLIED -->
+  4. Commit fixes:
      git add specs/${spec_dir_name}/
      git commit -m "fix(${epic_num}): resolve analysis findings"
 
@@ -382,6 +395,55 @@ The skill will:
 After the skill completes, verify:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "  cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
 $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "  cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
+$(if [[ "${HAS_FRONTEND:-false}" == "true" ]]; then cat <<'A11Y'
+
+When working on frontend/UI components, apply WCAG 2.1 AA accessibility standards:
+- All interactive elements must have aria-labels or accessible names
+- Ensure color contrast meets 4.5:1 for normal text, 3:1 for large text
+- All interactive flows must be keyboard-navigable
+- Images must have meaningful alt text
+A11Y
+fi)
+EOF
+}
+
+# ─── Phase: Security Review ───────────────────────────────────────────────────
+
+prompt_security_review() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
+    local spec_dir="${repo_root}/.specify/specs/${short_name}"
+
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+You are performing a **security-focused code review** of the changes made for epic ${epic_num}: ${title}.
+
+Read ALL modified and new files in the specs directory and implementation.
+
+## Security Checklist
+
+Check every item below. For each finding, classify as "auto-fixable" or "requires human review":
+
+1. **Auth boundary**: Every endpoint/handler verifies the resource belongs to the requesting org/user. No IDOR vulnerabilities.
+2. **Input validation**: No raw SQL concatenation, no unescaped HTML output, no unvalidated redirects or path traversal.
+3. **Error handling**: No silently swallowed errors, no empty catch/recover blocks, no error responses leaking internal details.
+4. **Secrets**: No hardcoded credentials, API keys, or tokens. No PII in log statements.
+5. **RLS policy coverage**: Every new table with tenant-scoped data has Row Level Security policies.
+6. **Migration safety**: Migrations are idempotent and can be re-run safely. No destructive operations without guards.
+7. **Dependency security**: No new dependencies with known vulnerabilities.
+
+## Actions
+
+If **ZERO findings** (all checks pass):
+  1. Append this exact marker at the END of ${spec_dir}/tasks.md on its own line:
+     <!-- SECURITY_REVIEWED -->
+  2. Commit with message: "security-review(${epic_num}): all checks passed"
+
+If **ANY findings**:
+  1. Fix all "auto-fixable" issues directly in the code
+  2. For "requires human review" items, add a comment in the code: // SECURITY: <description>
+  3. Do NOT add the <!-- SECURITY_REVIEWED --> marker
+  4. Commit fixes with message: "security-review(${epic_num}): fix <N> findings"
 EOF
 }
 
@@ -417,6 +479,15 @@ All implementation tasks are complete. Perform a senior code review.
      * Component decomposition matches the reusable components catalogue
      * Layout patterns match design specifications (flex, gap, padding, alignment)
      * Icon library matches Implementation Notes
+$(if [[ "${HAS_FRONTEND:-false}" == "true" ]]; then cat <<'A11Y'
+   - Accessibility (WCAG 2.1 AA):
+     * Interactive elements have aria-labels or accessible names
+     * Color contrast meets 4.5:1 for text, 3:1 for large text
+     * Keyboard navigation works for all interactive flows
+     * Images have alt text
+     * Form inputs have associated labels
+A11Y
+fi)
 
 3. Fix any issues found. Commit fixes:
    git add <specific files>
@@ -473,6 +544,16 @@ architectural understanding.
       - Reusable utilities: function signatures that agents MUST use instead of reinventing
       - Pattern rules: conventions agents MUST follow (DB access, error handling, output, testing)
       Keep under 50 lines between the markers. Do NOT modify anything outside the markers.
+
+      For the Reusable utilities section:
+      - Document EVERY new utility/helper function added in this epic
+      - Include the function signature and a one-line usage example
+      - Mark utilities that replace or deprecate previous patterns
+
+      For Pattern rules, include anti-patterns:
+      - For each new pattern, add a "DO NOT" counterpart showing the old/wrong way
+      - Example: "Use db.Pool for connections — DO NOT create raw pgx connections"
+      - Anti-patterns prevent agents from reinventing what already exists
 
    b) .specify/memory/architecture.md:
       Create or update 2-4 mermaid diagrams that give a new AI agent immediate
