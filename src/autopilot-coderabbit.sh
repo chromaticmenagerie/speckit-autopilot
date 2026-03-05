@@ -71,6 +71,10 @@ do_remote_merge() {
     _emit_event "$events_log" "remote_merge_start" \
         "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
 
+
+    # Ensure CodeRabbit config exists with sensible defaults
+    ensure_coderabbit_config "$repo_root"
+
     # Step 1: CodeRabbit CLI review (optional)
     if [[ "${HAS_CODERABBIT:-false}" == "true" ]]; then
         local _cli_rc=0
@@ -128,7 +132,7 @@ do_remote_merge() {
 # Non-blocking: always returns 0 (force-advances on failure/rate-limit).
 _coderabbit_cli_review() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5" events_log="$6"
-    local max_retries=3 attempt=0
+    local max_retries=${CODERABBIT_MAX_ROUNDS:-5} attempt=0
     local -a _cli_issue_counts=()
 
     log PHASE "CodeRabbit CLI review"

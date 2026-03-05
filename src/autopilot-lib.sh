@@ -533,6 +533,47 @@ detect_merge_target() {
     echo "${BASE_BRANCH:-master}"
 }
 
+# ─── CodeRabbit Config ────────────────────────────────────────────────────────
+
+# Ensure a .coderabbit.yaml exists in the target repo with sensible defaults.
+# Creates with profile: chill if missing. Never overwrites existing configs.
+ensure_coderabbit_config() {
+    local repo_root="${1:-.}"
+    local config_file="$repo_root/.coderabbit.yaml"
+
+    if [[ -f "$config_file" ]]; then
+        if grep -q "profile: assertive" "$config_file" 2>/dev/null; then
+            log WARN "Existing .coderabbit.yaml uses 'assertive' profile — not overriding"
+            log INFO "To use 'chill', edit .coderabbit.yaml or delete it and re-run"
+        fi
+        return 0
+    fi
+
+    log INFO "Creating default .coderabbit.yaml (profile: chill)"
+    cat > "$config_file" <<'CODERABBIT_EOF'
+language: en
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  path_filters:
+    - "!.specify/**"
+  path_instructions:
+    - path: "**/*"
+      instructions: "Focus on critical bugs, security vulnerabilities, and high-severity issues. Skip style nitpicks and minor improvements."
+  tools:
+    shellcheck:
+      enabled: true
+    biome:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+CODERABBIT_EOF
+}
+
 # ─── Verification ───────────────────────────────────────────────────────────
 
 source "${SCRIPT_DIR}/autopilot-verify.sh"

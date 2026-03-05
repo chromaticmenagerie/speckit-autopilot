@@ -58,13 +58,25 @@ _cr_cli_is_clean() {
 # ─── Issue Counting ─────────────────────────────────────────────────────────
 
 # Count actionable issues in CLI review output.
-# Matches: numbered lists (1.), bullet lists (- or *), file:line patterns.
-# Conservative: undercounts preferred over overcounts.
+# Primary: unique file:line references (works with --prompt-only prose output).
+# Fallback: numbered/bullet lists and line-start file:line patterns.
+# Uses whichever method finds more issues to avoid undercounting.
 _count_cli_issues() {
     local output="$1"
     [[ -z "$output" ]] && echo "0" && return
-    local count
-    count=$(echo "$output" | grep -cE '^\s*[0-9]+\.|^\s*[-*]\s|^[^[:space:]]+:[0-9]+' || true)
+    local count=0
+    # Primary: count unique file:line references (inline in prose)
+    local file_refs
+    file_refs=$(echo "$output" | grep -oE '[a-zA-Z0-9_/.+-]+\.(go|ts|tsx|js|jsx|svelte|py|sh|sql|yaml|yml|md|css|html):[0-9]+' | sort -u | wc -l)
+    # Fallback: original list-pattern matching
+    local list_count
+    list_count=$(echo "$output" | grep -cE '^\s*[0-9]+\.|^\s*[-*]\s|^[^[:space:]]+:[0-9]+' || true)
+    # Use whichever finds more issues
+    if [[ "$file_refs" -gt "$list_count" ]]; then
+        count=$file_refs
+    else
+        count=$list_count
+    fi
     count="${count:-0}"
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
     echo "$count"
