@@ -152,6 +152,40 @@ echo "0.0.1" > "$TEST1_DIR/.specify/autopilot-version"
 assert "legacy command removed" "[[ ! -f '$TEST1_DIR/.claude/commands/autopilot.md' ]]"
 assert "skill in new location" "[[ -f '$TEST1_DIR/.claude/skills/autopilot/SKILL.md' ]]"
 
+# ── Template and validate script ──
+echo ""
+echo -e "${BOLD}Test 8: Template & Validate Script${RESET}"
+
+# Check template exists
+if [[ -f "$SCRIPT_DIR/../templates/TEMPLATE-epic.md" ]]; then
+    echo -e "  ${GREEN}PASS${RESET} templates/TEMPLATE-epic.md exists"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "  ${RED}FAIL${RESET} templates/TEMPLATE-epic.md missing"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
+# Check autopilot-validate.sh is in the install script copy loop
+if grep -q 'autopilot-validate.sh' "$SCRIPT_DIR/../install.sh"; then
+    echo -e "  ${GREEN}PASS${RESET} autopilot-validate.sh in install.sh copy loop"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "  ${RED}FAIL${RESET} autopilot-validate.sh NOT in install.sh copy loop"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
+# Check template copy step exists in install.sh
+if grep -q 'TEMPLATE-epic.md' "$SCRIPT_DIR/../install.sh"; then
+    echo -e "  ${GREEN}PASS${RESET} TEMPLATE-epic.md copy step in install.sh"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "  ${RED}FAIL${RESET} TEMPLATE-epic.md copy step NOT in install.sh"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""

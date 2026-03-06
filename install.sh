@@ -113,7 +113,7 @@ mkdir -p "Design/Pencil Files"
 DEST=".specify/scripts/bash"
 mkdir -p "$DEST"
 
-for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-coderabbit.sh autopilot-coderabbit-helpers.sh autopilot-finalize.sh autopilot-verify.sh autopilot-watch.sh common.sh; do
+for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-coderabbit.sh autopilot-coderabbit-helpers.sh autopilot-finalize.sh autopilot-verify.sh autopilot-watch.sh autopilot-validate.sh common.sh; do
     if [[ -f "$SRC_DIR/src/$script" ]]; then
         cp "$SRC_DIR/src/$script" "$DEST/$script"
         chmod +x "$DEST/$script"
@@ -136,6 +136,16 @@ else
     warn "Skill file not found in source (skipped)"
 fi
 
+
+# ── Step 5b: Install epic template ────────────────────────────────────────
+TEMPLATE_DEST="docs/specs/epics"
+mkdir -p "$TEMPLATE_DEST"
+if [[ -f "$SRC_DIR/templates/TEMPLATE-epic.md" ]]; then
+    cp "$SRC_DIR/templates/TEMPLATE-epic.md" "$TEMPLATE_DEST/TEMPLATE-epic.md"
+    info "Epic template installed to $TEMPLATE_DEST/TEMPLATE-epic.md"
+else
+    warn "Epic template not found in source (skipped)"
+fi
 # Remove legacy command if present (pre-v0.2.0)
 if [[ -f ".claude/commands/autopilot.md" ]]; then
     rm -f ".claude/commands/autopilot.md"
