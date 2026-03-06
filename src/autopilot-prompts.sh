@@ -371,6 +371,10 @@ If ${spec_dir}/design-context.md exists, read it. It is the authoritative visual
 - Use the specified icon library (check Implementation Notes section)
 Also read CLAUDE.md for project conventions, reusable utilities, and patterns.
 
+IMPORTANT: Tasks marked - [-] in tasks.md are DEFERRED. Skip them entirely —
+do not implement them, do not mark them [x], do not create subagents for them.
+Only process tasks marked - [ ] (incomplete).
+
 When launching Task subagents for parallel [P] tasks, include this instruction
 in each subagent prompt:
   "Before writing code, read .specify/memory/architecture.md for module
@@ -382,7 +386,7 @@ in each subagent prompt:
 
 Then invoke the Skill tool:
   skill = "speckit.implement"
-  args  = "all tasks using subagents for parallel [P] tasks"
+  args  = "all tasks using subagents for parallel [P] tasks — IMPORTANT: tasks marked - [-] are deferred and MUST be skipped entirely, do not attempt to implement them"
 
 The skill will:
 - Read tasks.md and identify phases, dependencies, and [P] markers
@@ -410,19 +414,24 @@ EOF
 # ─── Phase: Security Review ───────────────────────────────────────────────────
 
 prompt_security_review() {
-    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
-    local spec_dir="${repo_root}/.specify/specs/${short_name}"
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" round="$5" max_rounds="$6"
+    local spec_dir="${repo_root}/specs/${short_name}"
 
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
 You are performing a **security-focused code review** of the changes made for epic ${epic_num}: ${title}.
+This is review round ${round} of ${max_rounds}.
 
 Read ALL modified and new files in the specs directory and implementation.
 
 ## Security Checklist
 
-Check every item below. For each finding, classify as "auto-fixable" or "requires human review":
+Check every item below. For each finding, classify severity and whether it is auto-fixable:
+
+Before reviewing, check tasks.md for any deferred tasks (- [-]). If deferred tasks exist,
+note which functionality is NOT implemented and flag any security implications of the missing
+code (e.g., missing authorization checks, missing input validation for deferred endpoints).
 
 1. **Auth boundary**: Every endpoint/handler verifies the resource belongs to the requesting org/user. No IDOR vulnerabilities.
 2. **Input validation**: No raw SQL concatenation, no unescaped HTML output, no unvalidated redirects or path traversal.
@@ -434,16 +443,67 @@ Check every item below. For each finding, classify as "auto-fixable" or "require
 
 ## Actions
 
-If **ZERO findings** (all checks pass):
-  1. Append this exact marker at the END of ${spec_dir}/tasks.md on its own line:
-     <!-- SECURITY_REVIEWED -->
-  2. Commit with message: "security-review(${epic_num}): all checks passed"
+Scan all code against the checklist above. Then **append** a new round section to \`${spec_dir}/security-findings.md\` using the Write tool. The file already exists with a header — do NOT overwrite existing content, only APPEND.
 
-If **ANY findings**:
-  1. Fix all "auto-fixable" issues directly in the code
-  2. For "requires human review" items, add a comment in the code: // SECURITY: <description>
-  3. Do NOT add the <!-- SECURITY_REVIEWED --> marker
-  4. Commit fixes with message: "security-review(${epic_num}): fix <N> findings"
+**If ZERO findings** (all checks pass), append:
+
+\`\`\`markdown
+## Round ${round} (${round}/${max_rounds})
+
+Verdict: PASS
+
+All security checks passed. No findings.
+\`\`\`
+
+**If ANY findings**, append:
+
+\`\`\`markdown
+## Round ${round} (${round}/${max_rounds})
+
+Verdict: FAIL
+
+### 1. [title of finding]
+- **Severity**: CRITICAL | HIGH | MEDIUM | LOW
+- **Category**: auth-boundary | input-validation | error-handling | secrets | rls | migration | dependency
+- **File**: path/to/file.go:42
+- **Auto-fixable**: yes | no
+- **Description**: What the issue is
+- **Fix**: How to fix it
+\`\`\`
+
+Repeat the numbered finding block for each issue found.
+
+Do NOT modify source code. Do NOT add HTML markers to tasks.md. Do NOT commit. **Append** ONLY to the findings file — do not overwrite existing content.
+EOF
+}
+
+prompt_security_fix() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" findings="$5"
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+The security review found issues that need fixing. Here are the findings:
+
+\`\`\`
+${findings}
+\`\`\`
+
+Instructions:
+1. Read each finding carefully — understand the file and line referenced.
+2. Read the relevant source files.
+3. Fix all CRITICAL and HIGH severity auto-fixable issues — these are mandatory.
+4. Fix MEDIUM auto-fixable issues if straightforward (< 5 lines changed).
+5. Skip LOW severity issues.
+6. For non-auto-fixable items: add a \`// SECURITY: <description>\` comment at the relevant location.
+7. After fixing, verify:
+$(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
+$(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
+8. Commit all fixes:
+   git add <specific files>
+   git commit -m "security-fix(${epic_num}): resolve security findings"
+9. Verify clean working tree: git status
+
+Do NOT add any HTML markers to tasks.md.
 EOF
 }
 

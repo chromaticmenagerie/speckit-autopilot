@@ -29,6 +29,7 @@ source "$SCRIPT_DIR/autopilot-github.sh"
 source "$SCRIPT_DIR/autopilot-coderabbit.sh"
 source "$SCRIPT_DIR/autopilot-verify.sh"
 source "$SCRIPT_DIR/autopilot-finalize.sh"
+source "$SCRIPT_DIR/autopilot-validate.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ declare -A PHASE_MODEL=(
     [coderabbit-fix]="$OPUS"
     [conflict-resolve]="$OPUS"
     [security-review]="$OPUS"
+    [security-fix]="$OPUS"
 )
 
 # Phase → allowed tools
@@ -72,7 +74,8 @@ declare -A PHASE_TOOLS=(
     [finalize-review]="Read,Write,Edit,Bash,Glob,Grep"
     [coderabbit-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
-    [security-review]="Read,Glob,Grep"
+    [security-review]="Read,Write,Glob,Grep"
+    [security-fix]="Read,Write,Edit,Bash,Glob,Grep"
 )
 
 # Phase → max retries (convergence phases get more attempts)
@@ -92,7 +95,8 @@ declare -A PHASE_MAX_RETRIES=(
     [finalize-review]=1
     [coderabbit-fix]=3
     [conflict-resolve]=3
-    [security-review]=3
+    [security-review]=1
+    [security-fix]=1
 )
 
 # ─── Argument Parsing ────────────────────────────────────────────────────────
@@ -103,6 +107,8 @@ DRY_RUN=false
 SILENT=false
 NO_GITHUB=false
 GITHUB_RESYNC=false
+STRICT_DEPS=false
+ALLOW_DEFERRED=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -125,6 +131,8 @@ parse_args() {
                 PHASE_MAX_RETRIES[clarify]=1
                 PHASE_MAX_RETRIES[analyze]=1
                 ;;
+            --strict-deps)      STRICT_DEPS=true ;;
+            --allow-deferred)   ALLOW_DEFERRED=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -137,6 +145,8 @@ parse_args() {
                 echo "  --fast          Reduce convergence phases to 1 attempt (faster iteration)"
                 echo "  --no-github          Disable GitHub Projects sync"
                 echo "  --github-resync      Resync all epics to GitHub Projects and exit"
+                echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
+                echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 exit 0
                 ;;
             [0-9][0-9][0-9])    TARGET_EPIC="$1" ;;
@@ -247,12 +257,15 @@ run_phase() {
             ;;
         review)
             prompt="$(prompt_review "$epic_num" "$title" "$repo_root" "$short_name")"
+            # Conditional deferred-awareness injection
+            local _review_deferred_count
+            _review_deferred_count=$(grep -c '^\- \[-\]' "$spec_dir/tasks.md" 2>/dev/null) || _review_deferred_count=0
+            if [[ "$_review_deferred_count" -gt 0 ]]; then
+                prompt+=$'\n\n'"IMPORTANT: ${_review_deferred_count} tasks in tasks.md are marked - [-] (deferred). These were NOT implemented. Verify deferred tasks don't leave security holes, broken imports, or dead code paths. Note deferred scope in your review summary."
+            fi
             ;;
         crystallize)
             prompt="$(prompt_crystallize "$epic_num" "$title" "$repo_root" "$short_name")"
-            ;;
-        security-review)
-            prompt="$(prompt_security_review "$epic_num" "$title" "$repo_root" "$short_name")"
             ;;
         *)
             log ERROR "Unknown phase: $phase"
@@ -382,6 +395,95 @@ _accumulate_phase_cost() {
     fi
 }
 
+# ─── Security Gate (review→fix loop) ─────────────────────────────────────
+
+_run_security_gate() {
+    local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
+    local max_rounds=${SECURITY_MAX_ROUNDS:-3}
+    local round=0
+    local spec_dir="$repo_root/specs/$short_name"
+    local findings_file="$spec_dir/security-findings.md"
+    local tasks_file="$spec_dir/tasks.md"
+    local verdict=""
+
+    log PHASE "Security gate (max $max_rounds rounds)"
+
+    # Initialize findings file ONCE with header (overwrite any stale file from previous run)
+    cat > "$findings_file" <<SEOF
+# Security Review: Epic ${epic_num}
+
+SEOF
+
+    while [[ $round -lt $max_rounds ]]; do
+        round=$((round + 1))
+        log INFO "Security review (round $round/$max_rounds)"
+
+        # 1. Build prompt with round number and deferred-awareness injection
+        local prompt
+        prompt="$(prompt_security_review "$epic_num" "$title" "$repo_root" "$short_name" "$round" "$max_rounds")"
+        local _sec_deferred_count
+        _sec_deferred_count=$(grep -c '^\- \[-\]' "$spec_dir/tasks.md" 2>/dev/null) || _sec_deferred_count=0
+        if [[ "$_sec_deferred_count" -gt 0 ]]; then
+            prompt+=$'\n\n'"IMPORTANT: ${_sec_deferred_count} tasks are marked - [-] (deferred). These were NOT implemented. Check whether the omitted functionality creates security gaps (missing auth checks, missing input validation, missing rate limiting for deferred endpoints)."
+        fi
+
+        # 2. Run security-review (read-only + Write for findings file)
+        invoke_claude "security-review" "$prompt" "$epic_num" "$title" || true
+        _accumulate_phase_cost "$repo_root"
+
+        # 3. Parse verdict from the LAST "Verdict:" line in findings file
+        #    (file is appended per round, so last match = current round)
+        if [[ ! -f "$findings_file" ]]; then
+            log WARN "No findings file produced — treating as PASS"
+            verdict="PASS"
+            break
+        fi
+
+        verdict=$(grep -i '^Verdict:' "$findings_file" | tail -1 | awk '{print toupper($2)}')
+        verdict="${verdict:-UNKNOWN}"
+
+        if [[ "$verdict" == "PASS" ]]; then
+            log OK "Security review: PASS (round $round)"
+            break
+        fi
+
+        log WARN "Security review: FAIL (round $round/$max_rounds)"
+
+        # 4. Extract ONLY the latest round's findings for the fix prompt
+        #    (everything after the last "## Round" header)
+        local latest_findings
+        latest_findings=$(awk '/^## Round '"$round"'/{found=1} found' "$findings_file")
+
+        # 5. Dispatch security-fix phase
+        local fix_prompt
+        fix_prompt="$(prompt_security_fix "$epic_num" "$title" "$repo_root" "$short_name" "$latest_findings")"
+        invoke_claude "security-fix" "$fix_prompt" "$epic_num" "$title" || {
+            log WARN "Security fix invocation failed"
+        }
+        _accumulate_phase_cost "$repo_root"
+    done
+
+    # 6. Write marker (orchestrator responsibility — NEVER the model)
+    if [[ -f "$tasks_file" ]]; then
+        if [[ "$verdict" != "PASS" ]] && [[ $round -ge $max_rounds ]]; then
+            log WARN "Security gate: issues remain after $max_rounds rounds — force-advancing"
+            echo "" >> "$tasks_file"
+            echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
+            echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
+            (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
+             git commit -m "security-review(${epic_num}): force-skipped after ${max_rounds} rounds" 2>/dev/null || true)
+        else
+            log OK "Security gate: passed"
+            echo "" >> "$tasks_file"
+            echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
+            (cd "$repo_root" && git add "$tasks_file" "$findings_file" 2>/dev/null && \
+             git commit -m "security-review(${epic_num}): all checks passed" 2>/dev/null || true)
+        fi
+    fi
+
+    return 0
+}
+
 # ─── Prefix Self-Healing ───────────────────────────────────────────────────
 
 # Rename branch + specs dir when the numeric prefix doesn't match the epic number.
@@ -476,6 +578,24 @@ run_epic() {
         short_name="$(_correct_prefix "$repo_root" "$epic_num" "$short_name")"
     fi
 
+    # ── Pre-flight epic validation ──
+    # Only validate on early states — no point re-validating at implement/review
+    local _pre_state
+    _pre_state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
+    if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
+        case "$_pre_state" in
+            specify|clarify|clarify-verify|plan|design-read|tasks)
+                if ! validate_epic "$repo_root" "$epic_num" "$epic_file"; then
+                    log ERROR "Epic $epic_num failed validation — fix the epic file and re-run"
+                    return 1
+                fi
+                ;;
+            *)
+                log INFO "Skipping validation — epic already at $_pre_state"
+                ;;
+        esac
+    fi
+
     # Ensure correct branch (skip for specify — it creates the branch)
     local state
     state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
@@ -487,6 +607,7 @@ run_epic() {
     # Phase loop
     local total_iterations=0
     local MAX_TOTAL_ITERATIONS=30
+    local consecutive_deferred=0
 
     while true; do
         total_iterations=$((total_iterations + 1))
@@ -506,6 +627,11 @@ run_epic() {
         if [[ "$state" == "done" ]]; then
             log OK "Epic $epic_num is complete and merged"
             return 0
+        fi
+
+        if [[ "$state" == "security-review" ]]; then
+            _run_security_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
+            continue  # re-detect state → should now be "review"
         fi
 
         if [[ "$state" == "review" ]]; then
@@ -619,6 +745,7 @@ run_epic() {
 
                 if [[ "$new_state" != "$prev_state" ]]; then
                     log OK "Phase $prev_state → $new_state (exit=$phase_exit)"
+                    consecutive_deferred=0  # Reset on successful phase transition
 
                     # After tasks phase: create task issues
                     if [[ "$prev_state" == "tasks" ]] && $GH_ENABLED; then
@@ -693,15 +820,61 @@ run_epic() {
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance analyze-verify after ${retries} attempts" 2>/dev/null || true
                 _accumulate_phase_cost "$repo_root"
                 continue
-            elif [[ "$state" == "security-review" ]]; then
-                log WARN "Security review stuck — force-advancing (security was NOT fully verified)"
-                local _tasks_file="${spec_dir}/tasks.md"
-                if [[ -f "$_tasks_file" ]]; then
-                    echo "" >> "$_tasks_file"
-                    echo "<!-- SECURITY_REVIEWED -->" >> "$_tasks_file"
-                    echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$_tasks_file"
-                    (cd "$repo_root" && git add "$_tasks_file" && git commit -m "security-review(${epic_num}): force-skipped")
+            elif [[ "$state" == "implement" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
+                if ! ${ALLOW_DEFERRED:-false}; then
+                    log ERROR "Implement stuck after $retries attempts. Re-run with --allow-deferred to defer stuck tasks."
+                    log ERROR "Resume with: ./autopilot.sh $epic_num --allow-deferred"
+                    return 1
                 fi
+
+                # Scope deferral to the stuck phase only
+                local stuck_phase
+                stuck_phase=$(get_current_impl_phase "$spec_dir/tasks.md")
+
+                # Guard against empty stuck_phase
+                if [[ -z "$stuck_phase" ]]; then
+                    log ERROR "Cannot determine stuck phase — no incomplete tasks found. This should not happen."
+                    return 1
+                fi
+
+                log WARN "Implement: deferring incomplete tasks in Phase $stuck_phase only"
+
+                # Convert - [ ] to - [-] ONLY within the stuck phase section
+                local in_phase=false phase_num=""
+                local tmpfile="$spec_dir/tasks.md.tmp"
+                : > "$tmpfile"
+                while IFS= read -r line; do
+                    if [[ "$line" =~ ^##[#]?\ *Phase\ ([0-9]+) ]]; then
+                        phase_num="${BASH_REMATCH[1]}"
+                        if [[ "$phase_num" == "$stuck_phase" ]]; then
+                            in_phase=true
+                        elif $in_phase; then
+                            in_phase=false
+                        fi
+                    fi
+                    if $in_phase && [[ "$line" =~ ^-\ \[\ \] ]]; then
+                        echo "${line/- \[ \]/- [-]}" >> "$tmpfile"
+                    else
+                        echo "$line" >> "$tmpfile"
+                    fi
+                done < "$spec_dir/tasks.md"
+                mv "$tmpfile" "$spec_dir/tasks.md"
+
+                # Append audit marker
+                local deferred_count
+                deferred_count=$(grep -c '^\- \[-\]' "$spec_dir/tasks.md" 2>/dev/null) || deferred_count=0
+                printf '\n<!-- FORCE_DEFERRED: Phase %s (%d tasks) after %d implement attempts -->\n' \
+                    "$stuck_phase" "$deferred_count" "$retries" >> "$spec_dir/tasks.md"
+
+                # Track cascading deferrals
+                consecutive_deferred=$((consecutive_deferred + 1))
+                if [[ $consecutive_deferred -ge 2 ]]; then
+                    log ERROR "2 consecutive phases deferred — stopping to avoid token burn. Resume with: ./autopilot.sh $epic_num --allow-deferred"
+                    return 1
+                fi
+
+                git -C "$repo_root" add "$spec_dir/tasks.md" && \
+                git -C "$repo_root" commit -m "chore(${epic_num}): defer Phase $stuck_phase tasks after ${retries} implement attempts" 2>/dev/null || true
                 _accumulate_phase_cost "$repo_root"
                 continue
             fi
