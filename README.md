@@ -15,6 +15,7 @@ The installer:
 - Registers the `/autopilot` skill in `.claude/skills/autopilot/`
 - Auto-detects project tooling (Python, Node, Rust, Go) and writes `.specify/project.env`
 - Detects your base branch (main/master) for merge operations
+- Installs epic template to `docs/specs/epics/TEMPLATE-epic.md`
 
 ## Usage
 
@@ -30,6 +31,8 @@ Or directly:
 
 ```bash
 .specify/scripts/bash/autopilot.sh [epic-number] [--dry-run] [--silent] [--no-auto-continue]
+.specify/scripts/bash/autopilot.sh 003 --strict-deps     # Block on unmerged dependencies
+.specify/scripts/bash/autopilot.sh 003 --allow-deferred   # Defer stuck tasks instead of stopping
 ```
 
 ## How It Works
@@ -50,6 +53,57 @@ Each phase:
 Convergence phases (clarify, analyze) loop until zero observations/findings.
 
 After all epics merge, **finalize** runs: test/lint verification, iterative fix loop, cross-epic integration review (Opus), and project summary generation.
+
+## Epic Template
+
+A standardised epic template is installed to `docs/specs/epics/TEMPLATE-epic.md`. Copy it to create new epics:
+
+```bash
+cp docs/specs/epics/TEMPLATE-epic.md docs/specs/epics/epic-NNN-feature-name.md
+```
+
+The template includes all required sections (Functional Requirements, Acceptance Criteria, Dependencies) and a self-containment checklist.
+
+## Epic Validation
+
+Before the specify phase, autopilot validates each epic file:
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| `epic_id` format | ERROR | Must match `epic-NNN` (3-digit) |
+| `status` value | ERROR | Must be: draft, not-started, in-progress, merged |
+| Required sections | ERROR | Functional Requirements, Acceptance Criteria, Dependencies |
+| Dependency status | WARN | Referenced epics should be merged (ERROR with `--strict-deps`) |
+| Content quality | WARN | FR bullet count, AC checkbox format |
+
+Use `--strict-deps` to block on unmerged dependencies instead of warning.
+
+## Deferred Tasks
+
+Tasks can be marked `- [-]` (deferred) to skip them without blocking the pipeline. Deferred tasks:
+
+- Are **not** counted as incomplete — the pipeline progresses to review/merge
+- Are **skipped** during implementation (via prompt instructions)
+- Are **excluded** from GitHub issue creation
+- Are **rendered with strikethrough** in the GitHub epic body
+- Are **listed** in the post-merge epic summary
+- Trigger a **project-level warning** in finalize if any remain
+
+### Manual deferral
+
+Mark tasks as `- [-]` directly in `tasks.md` before or during a run.
+
+### Automatic deferral (`--allow-deferred`)
+
+When the implement phase is stuck after max retries:
+
+- **Without `--allow-deferred`** (default): Pipeline stops with an error
+- **With `--allow-deferred`**: Only the stuck phase's tasks are deferred; future phases are still attempted
+
+Safety guardrails:
+- Scoped to the stuck phase only (not all phases)
+- Stops after 2 consecutive phases deferred
+- Audit marker: `<!-- FORCE_DEFERRED: Phase N -->` distinguishes auto-deferral from manual
 
 ## Configuration
 
@@ -83,6 +137,7 @@ While running:
 | `autopilot-prompts.sh` | Language-agnostic prompt templates per phase | ~350 |
 | `autopilot-stream.sh` | NDJSON stream processor, live dashboard | ~290 |
 | `autopilot-detect-project.sh` | Project tooling auto-detection | ~150 |
+| `autopilot-validate.sh` | Pre-specify epic validation | ~200 |
 
 ## Upgrade
 
