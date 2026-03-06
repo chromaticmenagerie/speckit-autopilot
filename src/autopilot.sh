@@ -109,6 +109,7 @@ NO_GITHUB=false
 GITHUB_RESYNC=false
 STRICT_DEPS=false
 ALLOW_DEFERRED=false
+SKIP_CODERABBIT=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -133,6 +134,7 @@ parse_args() {
                 ;;
             --strict-deps)      STRICT_DEPS=true ;;
             --allow-deferred)   ALLOW_DEFERRED=true ;;
+            --skip-coderabbit)  SKIP_CODERABBIT=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -147,6 +149,7 @@ parse_args() {
                 echo "  --github-resync      Resync all epics to GitHub Projects and exit"
                 echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
+                echo "  --skip-coderabbit    Skip CodeRabbit CLI review during remote merge"
                 exit 0
                 ;;
             [0-9][0-9][0-9])    TARGET_EPIC="$1" ;;

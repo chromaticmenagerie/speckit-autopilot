@@ -56,9 +56,15 @@ do_remote_merge() {
     echo -e "  Target: ${BOLD}origin/$MERGE_TARGET${RESET}"
     echo ""
 
-    if [[ -t 0 ]]; then
-        echo -n "Push $short_name & create PR to $MERGE_TARGET? [Y/n] "
-        read -r -t 30 confirm || confirm="Y"
+    if [[ "${AUTOPILOT_NO_CONFIRM:-false}" == "true" ]]; then
+        log INFO "AUTOPILOT_NO_CONFIRM set — auto-proceeding with remote merge"
+    elif [[ -t 0 ]]; then
+        echo -n "Push $short_name & create PR to $MERGE_TARGET? [Y/n] (auto-yes in 10s) "
+        local confirm=""
+        read -r -t 10 confirm || {
+            confirm="Y"
+            log INFO "Prompt timed out after 10s — auto-proceeding with Y"
+        }
         if [[ "$confirm" =~ ^[Nn] ]]; then
             log WARN "Remote merge declined — falling back to local merge"
             do_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
@@ -76,7 +82,7 @@ do_remote_merge() {
     ensure_coderabbit_config "$repo_root"
 
     # Step 1: CodeRabbit CLI review (optional)
-    if [[ "${HAS_CODERABBIT:-false}" == "true" ]]; then
+    if [[ "${HAS_CODERABBIT:-false}" == "true" ]] && [[ "${SKIP_CODERABBIT:-false}" != "true" ]]; then
         local _cli_rc=0
         _coderabbit_cli_review "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file" "$events_log" || _cli_rc=$?
         if [[ $_cli_rc -eq 2 ]]; then
@@ -132,7 +138,7 @@ do_remote_merge() {
 # Non-blocking: always returns 0 (force-advances on failure/rate-limit).
 _coderabbit_cli_review() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5" events_log="$6"
-    local max_retries=${CODERABBIT_MAX_ROUNDS:-5} attempt=0
+    local max_retries=${CODERABBIT_MAX_ROUNDS:-3} attempt=0
     local -a _cli_issue_counts=()
 
     log PHASE "CodeRabbit CLI review"
@@ -159,7 +165,21 @@ _coderabbit_cli_review() {
         fi
 
         local review_output
-        review_output=$(<"$tmpfile"); rm -f "$tmpfile"
+        review_output=$(<"$tmpfile")
+
+        # Persist findings to a durable log file before cleaning up the temp file
+        local findings_log_dir="$repo_root/.specify/logs"
+        local findings_log="$findings_log_dir/${epic_num}-coderabbit-findings.md"
+        mkdir -p "$findings_log_dir"
+        {
+            echo ""
+            echo "## Round $attempt / $max_retries"
+            echo "_Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')_"
+            echo ""
+            echo "$review_output"
+        } >> "$findings_log"
+
+        rm -f "$tmpfile"
 
         # Check if review is clean
         if _cr_cli_is_clean "$review_output"; then
@@ -179,7 +199,17 @@ _coderabbit_cli_review() {
             log WARN "CodeRabbit CLI stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
             _emit_event "$events_log" "coderabbit_cli_stalled" \
                 "$(jq -nc --arg e "$epic_num" --argjson ic "$_cli_issue_count" '{epic:$e, issue_count:$ic}')"
+            if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]]; then
+                log WARN "FORCE_ADVANCE_ON_REVIEW_FAIL set — force-advancing after $attempt rounds (stall detected)"
+                return 0
+            fi
             return 2
+        fi
+
+        # Early exit when force-advance is enabled and we've completed enough rounds
+        if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
+            log WARN "FORCE_ADVANCE_ON_REVIEW_FAIL set — force-advancing after $attempt rounds (diminishing returns)"
+            return 0
         fi
         _emit_event "$events_log" "coderabbit_cli_issues" \
             "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" --argjson ic "$_cli_issue_count" '{epic:$e, attempt:$a, issue_count:$ic}')"
