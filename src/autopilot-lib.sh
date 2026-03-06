@@ -251,20 +251,22 @@ detect_state() {
         return
     fi
 
-    # Count incomplete vs complete tasks
-    local incomplete complete
-    incomplete=$(grep -ci '^\- \[ \]' "$spec_dir/tasks.md" 2>/dev/null || true)
-    complete=$(grep -ci '^\- \[x\]' "$spec_dir/tasks.md" 2>/dev/null || true)
-    incomplete="${incomplete:-0}"
-    complete="${complete:-0}"
+    # Count task states
+    local incomplete complete deferred
+    incomplete=$(grep -c '^\- \[ \]' "$spec_dir/tasks.md" 2>/dev/null) || incomplete=0
+    complete=$(grep -c '^\- \[x\]' "$spec_dir/tasks.md" 2>/dev/null) || complete=0
+    deferred=$(grep -c '^\- \[-\]' "$spec_dir/tasks.md" 2>/dev/null) || deferred=0
 
     if [[ "$incomplete" -gt 0 ]]; then
         echo "implement"
         return
     fi
 
-    if [[ "$complete" -gt 0 ]]; then
-        # All tasks done — check if already merged
+    # Include deferred in the "has work been done" check.
+    # Without this, all-deferred-zero-complete falls through to the edge case
+    # and returns "tasks" instead of progressing to review.
+    if [[ "$((complete + deferred))" -gt 0 ]]; then
+        # All tasks done or deferred — check if already merged
         if is_epic_merged "$repo_root" "$short_name"; then
             echo "done"
         elif ! grep -q '<!-- SECURITY_REVIEWED -->' "$spec_dir/tasks.md" 2>/dev/null; then
@@ -405,6 +407,14 @@ write_epic_summary() {
         lint_output="(no lint command configured)"
     fi
 
+    # Count deferred tasks and include in summary
+    local deferred_count
+    deferred_count=$(grep -c '^\- \[-\]' "$repo_root/specs/$short_name/tasks.md" 2>/dev/null) || deferred_count=0
+    local deferred_list=""
+    if [[ "$deferred_count" -gt 0 ]]; then
+        deferred_list=$(grep '^\- \[-\]' "$repo_root/specs/$short_name/tasks.md" | sed 's/^- \[-\] /- /' || true)
+    fi
+
     # Build per-phase table from events.jsonl
     local phase_table=""
     if [[ -f "$events_log" ]]; then
@@ -465,6 +475,16 @@ $test_output
 \`\`\`
 $lint_output
 \`\`\`
+
+$(if [[ "$deferred_count" -gt 0 ]]; then cat <<DEFERRED_EOF
+
+## Deferred Tasks ($deferred_count)
+
+$deferred_list
+
+> These tasks were deferred during implementation and may need follow-up.
+DEFERRED_EOF
+fi)
 
 ## Phase Breakdown
 

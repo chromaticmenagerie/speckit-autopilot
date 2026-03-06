@@ -29,7 +29,7 @@ _gh_parse_tasks() {
             task_counter=0
             continue
         fi
-        if [[ -n "$current_phase" ]] && [[ "$line" =~ ^-\ \[([\ x])\]\ (.+) ]]; then
+        if [[ -n "$current_phase" ]] && [[ "$line" =~ ^-\ \[([\ x-])\]\ (.+) ]]; then
             task_counter=$((task_counter + 1))
             local desc="${BASH_REMATCH[2]}"
             desc="${desc% \[P\]}"
@@ -104,6 +104,7 @@ gh_create_task_issues() {
 
     while IFS='|' read -r key checked desc; do
         [[ -z "$key" ]] && continue
+        [[ "$checked" == "-" ]] && continue   # Skip deferred tasks — don't create issue
 
         local existing
         existing=$(jq -r --arg k "$key" '.tasks[$k].url // empty' "$json_file" 2>/dev/null)
@@ -194,16 +195,22 @@ gh_update_epic_body() {
         local issue_num
         issue_num=$(jq -r --arg k "$key" '.tasks[$k].number // empty' "$json_file" 2>/dev/null)
 
-        local checkbox="[ ]"
-        if [[ "$checked" == "x" ]]; then
-            checkbox="[x]"
+        if [[ "$checked" == "-" ]]; then
+            # No checkbox — strikethrough prevents accidental GitHub toggle
+            body+="- ~~[${epic_num}-${key}] ${desc}~~ *(deferred)*"$'\n'
+        elif [[ "$checked" == "x" ]]; then
             done_count=$((done_count + 1))
-        fi
-
-        if [[ -n "$issue_num" ]]; then
-            body+="- ${checkbox} [${epic_num}-${key}] ${desc} (#${issue_num})"$'\n'
+            if [[ -n "$issue_num" ]]; then
+                body+="- [x] [${epic_num}-${key}] ${desc} (#${issue_num})"$'\n'
+            else
+                body+="- [x] [${epic_num}-${key}] ${desc}"$'\n'
+            fi
         else
-            body+="- ${checkbox} [${epic_num}-${key}] ${desc}"$'\n'
+            if [[ -n "$issue_num" ]]; then
+                body+="- [ ] [${epic_num}-${key}] ${desc} (#${issue_num})"$'\n'
+            else
+                body+="- [ ] [${epic_num}-${key}] ${desc}"$'\n'
+            fi
         fi
     done < <(_gh_parse_tasks < "$tasks_file")
 

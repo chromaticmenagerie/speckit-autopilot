@@ -297,15 +297,17 @@ _get_impl_progress() {
 
     if [[ "$current_mtime" != "$_impl_tasks_mtime" ]]; then
         _impl_tasks_mtime="$current_mtime"
-        local cur total inc comp
+        local cur total inc comp def
         cur=$(get_current_impl_phase "$tasks_file")
         total=$(count_phases "$tasks_file")
         inc=$(grep -c '^\- \[ \]' "$tasks_file" 2>/dev/null) || inc=0
         comp=$(grep -c '^\- \[x\]' "$tasks_file" 2>/dev/null) || comp=0
+        def=$(grep -c '^\- \[-\]' "$tasks_file" 2>/dev/null) || def=0
         _impl_progress_cache=$(jq -nc \
             --argjson cp "${cur:-0}" --argjson tp "${total:-0}" \
             --argjson ic "${inc:-0}" --argjson cc "${comp:-0}" \
-            '{current_phase:$cp, total_phases:$tp, tasks_complete:$cc, tasks_remaining:$ic}')
+            --argjson dc "${def:-0}" \
+            '{current_phase:$cp, total_phases:$tp, tasks_complete:$cc, tasks_remaining:$ic, tasks_deferred:$dc}')
     fi
     echo "$_impl_progress_cache"
 }
@@ -370,14 +372,20 @@ _print_dashboard_header() {
     if [[ "$phase" == "implement" ]]; then
         local prog
         prog=$(_get_impl_progress "$epic")
-        local comp rem cur tot
+        local comp rem cur tot def
         comp=$(echo "$prog" | jq '.tasks_complete // 0')
         rem=$(echo "$prog" | jq '.tasks_remaining // 0')
         cur=$(echo "$prog" | jq '.current_phase // 0')
         tot=$(echo "$prog" | jq '.total_phases // 0')
+        def=$(echo "$prog" | jq '.tasks_deferred // 0')
         if [[ "$tot" -gt 0 ]]; then
-            printf "  ${BOLD}║${RESET}  Tasks: ${GREEN}%d done${RESET} / ${YELLOW}%d remaining${RESET} (phase %s/%s)\n" \
-                "$comp" "$rem" "$cur" "$tot"
+            if [[ "$def" -gt 0 ]]; then
+                printf "  ${BOLD}║${RESET}  Tasks: ${GREEN}%d done${RESET} / ${YELLOW}%d remaining${RESET} / ${DIM}%d deferred${RESET} (phase %s/%s)\n" \
+                    "$comp" "$rem" "$def" "$cur" "$tot"
+            else
+                printf "  ${BOLD}║${RESET}  Tasks: ${GREEN}%d done${RESET} / ${YELLOW}%d remaining${RESET} (phase %s/%s)\n" \
+                    "$comp" "$rem" "$cur" "$tot"
+            fi
         fi
     fi
 

@@ -21,7 +21,7 @@ REPO_ROOT=""; STATUS_FILE=""; EVENTS_FILE=""
 SPIN_IDX=0; TERM_ROWS=24; TERM_COLS=80; ALT_SCREEN_ACTIVE=false
 STATUS_EPIC=""; STATUS_PHASE=""; STATUS_COST=""; STATUS_TOKENS_IN=""
 STATUS_TOKENS_OUT=""; STATUS_LAST_TOOL=""; STATUS_PID=""; STATUS_LAST_ACTIVITY=""
-IMPL_CURRENT_PHASE=""; IMPL_TOTAL_PHASES=""; IMPL_TASKS_COMPLETE=""; IMPL_TASKS_REMAINING=""
+IMPL_CURRENT_PHASE=""; IMPL_TOTAL_PHASES=""; IMPL_TASKS_COMPLETE=""; IMPL_TASKS_REMAINING=""; IMPL_TASKS_DEFERRED=""
 EPIC_TITLE=""
 TIMELINE_PHASES=(); TIMELINE_DURATIONS=(); TIMELINE_COSTS=(); TIMELINE_ITERS=()
 ACTIVITY_TIMES=(); ACTIVITY_TOOLS=(); ACTIVITY_TARGETS=()
@@ -123,13 +123,14 @@ read_status() {
         (.implement_progress.current_phase // "" | tostring),
         (.implement_progress.total_phases // "" | tostring),
         (.implement_progress.tasks_complete // "" | tostring),
-        (.implement_progress.tasks_remaining // "" | tostring)
+        (.implement_progress.tasks_remaining // "" | tostring),
+        (.implement_progress.tasks_deferred // "" | tostring)
     ] | join("\t")' "$STATUS_FILE" 2>/dev/null) || return 1
     [[ -z "$parsed" ]] && return 1
     IFS=$'\t' read -r STATUS_EPIC STATUS_PHASE STATUS_COST STATUS_TOKENS_IN \
         STATUS_TOKENS_OUT STATUS_LAST_TOOL STATUS_PID STATUS_LAST_ACTIVITY \
         IMPL_CURRENT_PHASE IMPL_TOTAL_PHASES IMPL_TASKS_COMPLETE \
-        IMPL_TASKS_REMAINING <<< "$parsed"
+        IMPL_TASKS_REMAINING IMPL_TASKS_DEFERRED <<< "$parsed"
     return 0
 }
 
@@ -339,12 +340,18 @@ render_impl_progress() {
 
     local done_n="${IMPL_TASKS_COMPLETE:-0}"
     local rem_n="${IMPL_TASKS_REMAINING:-0}"
-    local total=$(( done_n + rem_n ))
+    local def_n="${IMPL_TASKS_DEFERRED:-0}"
+    local total=$(( done_n + rem_n + def_n ))
     local pct=0
-    [[ $total -gt 0 ]] && pct=$(( done_n * 100 / total ))
+    [[ $total -gt 0 ]] && pct=$(( (done_n + def_n) * 100 / total ))
 
-    printf "  Phase %s/%s · %s done / %s remaining\n" \
-        "${IMPL_CURRENT_PHASE:-?}" "${IMPL_TOTAL_PHASES:-?}" "$done_n" "$rem_n"
+    if [[ "$def_n" -gt 0 ]]; then
+        printf "  Phase %s/%s · %s done / %s remaining / %s deferred\n" \
+            "${IMPL_CURRENT_PHASE:-?}" "${IMPL_TOTAL_PHASES:-?}" "$done_n" "$rem_n" "$def_n"
+    else
+        printf "  Phase %s/%s · %s done / %s remaining\n" \
+            "${IMPL_CURRENT_PHASE:-?}" "${IMPL_TOTAL_PHASES:-?}" "$done_n" "$rem_n"
+    fi
 
     # Progress bar
     local bar_w=$(( TERM_COLS - 12 ))

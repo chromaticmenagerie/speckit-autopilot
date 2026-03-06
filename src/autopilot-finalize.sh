@@ -112,6 +112,19 @@ run_finalize() {
         fi
     fi
 
+    # ── Step 2b: Deferred task accumulation check ──
+    local total_deferred=0
+    local count
+    for tasks_file in "$repo_root"/specs/*/tasks.md; do
+        [[ ! -f "$tasks_file" ]] && continue
+        count=$(grep -c '^\- \[-\]' "$tasks_file" 2>/dev/null) || count=0
+        total_deferred=$((total_deferred + count))
+    done
+
+    if [[ "$total_deferred" -gt 0 ]]; then
+        log WARN "Project has $total_deferred deferred tasks across all epics — consider creating a follow-up epic"
+    fi
+
     # ── Step 3: Generate project summary ──
     write_project_summary "$repo_root"
 
