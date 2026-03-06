@@ -26,8 +26,9 @@ PROJECT_BUILD_CMD=""
 PROJECT_FORMAT_CMD=""
 PROJECT_PREFLIGHT_TOOLS=""
 BASE_BRANCH=""
-FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+FORCE_ADVANCE_ON_REVIEW_FAIL="true"
 CONVERGENCE_STALL_ROUNDS=2
+CODERABBIT_MAX_ROUNDS=3
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -511,9 +512,10 @@ load_project_config() {
     PROJECT_BUILD_CMD=""
     PROJECT_FORMAT_CMD=""
     BASE_BRANCH="master"
-    FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+    FORCE_ADVANCE_ON_REVIEW_FAIL="true"
     PROJECT_PREFLIGHT_TOOLS=""
     CONVERGENCE_STALL_ROUNDS=2
+    CODERABBIT_MAX_ROUNDS=3
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."

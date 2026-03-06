@@ -45,14 +45,25 @@ _cr_pr_comments() {
 }
 
 # Check if CodeRabbit CLI output indicates clean review.
+# Severity filtering: only CRITICAL and HIGH findings count as "not clean."
+# LOW, INFO, and MEDIUM findings are ignored to avoid infinite convergence
+# loops — prompt_coderabbit_fix tells Claude to skip LOW and only optionally
+# fix MEDIUM, so the clean check must align with that policy.
 _cr_cli_is_clean() {
     local output="$1"
     [[ -z "$output" ]] && return 0
-    # Heuristic: if output contains no actionable findings
+    # Heuristic: if output explicitly says no issues found
     echo "$output" | grep -qi "no issues\|no problems\|looks good\|no suggestions\|no findings" && return 0
     # If very short (< 50 chars), likely a "nothing to report" message
     [[ ${#output} -lt 50 ]] && return 0
-    return 1
+    # Severity filter: only fail on CRITICAL or HIGH findings.
+    # Matches patterns like "**Severity**: CRITICAL", "severity: high",
+    # "Severity: CRITICAL", "[CRITICAL]", "[HIGH]", etc.
+    if echo "$output" | grep -qiE '\*{0,2}severity\*{0,2}\s*:?\s*(critical|high)|\[(critical|high)\]'; then
+        return 1
+    fi
+    # No CRITICAL/HIGH findings — treat as clean even if LOW/MEDIUM/INFO remain
+    return 0
 }
 
 # ─── Issue Counting ─────────────────────────────────────────────────────────

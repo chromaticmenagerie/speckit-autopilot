@@ -267,8 +267,8 @@ HAS_GH_CLI="$HAS_GH_CLI"
 HAS_FRONTEND="$HAS_FRONTEND"
 
 # Force-advance past CodeRabbit CLI review failures instead of halting.
-# Set to "true" to keep the old behavior (always advance). Default: "false" (halt on failure).
-FORCE_ADVANCE_ON_REVIEW_FAIL="false"
+# Default: "true" (advance past failures). Set to "false" to halt on CodeRabbit review failures.
+FORCE_ADVANCE_ON_REVIEW_FAIL="true"
 
 # Preflight tools required by this project (space-separated).
 PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
