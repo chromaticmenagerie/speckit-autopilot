@@ -147,20 +147,53 @@ _coderabbit_cli_review() {
         attempt=$((attempt + 1))
         log INFO "CodeRabbit CLI review (round $attempt/$max_retries)"
 
-        local tmpfile rc=0
-        tmpfile=$(mktemp)
-        (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET") \
-            > "$tmpfile" 2>&1 || rc=$?
+        local tmpfile rc=0 _cr_retry=0
+        while [[ $_cr_retry -lt 2 ]]; do
+            tmpfile=$(mktemp)
+            rc=0
+            (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET") \
+                > "$tmpfile" 2>&1 || rc=$?
 
-        # Rate limit / network error → skip
+            if [[ $rc -eq 0 ]]; then
+                break
+            fi
+
+            _cr_retry=$((_cr_retry + 1))
+            if [[ $_cr_retry -lt 2 ]]; then
+                local _cr_output
+                _cr_output=$(<"$tmpfile"); rm -f "$tmpfile"
+                if echo "$_cr_output" | grep -qi "rate.limit\|429\|too many requests"; then
+                    log WARN "CodeRabbit rate limited — skipping CLI review"
+                    return 0
+                fi
+                log WARN "CodeRabbit CLI error (exit $rc) — retrying in 10s"
+                sleep 10
+            fi
+        done
+
+        # Final error handling after retry exhausted
         if [[ $rc -ne 0 ]]; then
             local output
             output=$(<"$tmpfile"); rm -f "$tmpfile"
+            # Persist error to diagnostic log
+            local error_log="$repo_root/.specify/logs/${epic_num}-coderabbit-errors.log"
+            mkdir -p "$repo_root/.specify/logs"
+            {
+                echo "--- $(date -u '+%Y-%m-%dT%H:%M:%SZ') | round $attempt | exit $rc ---"
+                echo "$output" | head -20
+                echo ""
+            } >> "$error_log"
+            # Emit structured event
+            local _err_snippet
+            _err_snippet=$(echo "$output" | head -5 | tr '\n' ' ' | cut -c1-300)
+            _emit_event "$events_log" "coderabbit_cli_error" \
+                "$(jq -nc --arg e "$epic_num" --argjson rc "$rc" --arg err "$_err_snippet" --argjson retry "$_cr_retry" \
+                    '{epic:$e, exit_code:$rc, error_snippet:$err, retry_count:$retry}')"
             if echo "$output" | grep -qi "rate.limit\|429\|too many requests"; then
                 log WARN "CodeRabbit rate limited — skipping CLI review"
                 return 0
             fi
-            log WARN "CodeRabbit CLI error (exit $rc) — skipping"
+            log WARN "CodeRabbit CLI error (exit $rc) after retry — skipping"
             return 0
         fi
 
@@ -199,16 +232,16 @@ _coderabbit_cli_review() {
             log WARN "CodeRabbit CLI stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
             _emit_event "$events_log" "coderabbit_cli_stalled" \
                 "$(jq -nc --arg e "$epic_num" --argjson ic "$_cli_issue_count" '{epic:$e, issue_count:$ic}')"
-            if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]]; then
-                log WARN "FORCE_ADVANCE_ON_REVIEW_FAIL set — force-advancing after $attempt rounds (stall detected)"
+            if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]]; then
+                log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (stall detected)"
                 return 0
             fi
             return 2
         fi
 
         # Early exit when force-advance is enabled and we've completed enough rounds
-        if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
-            log WARN "FORCE_ADVANCE_ON_REVIEW_FAIL set — force-advancing after $attempt rounds (diminishing returns)"
+        if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
+            log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (diminishing returns)"
             return 0
         fi
         _emit_event "$events_log" "coderabbit_cli_issues" \
@@ -222,12 +255,12 @@ _coderabbit_cli_review() {
         }
     done
 
-    if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}" == "true" ]]; then
+    if [[ "${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}" == "true" ]]; then
         log WARN "CodeRabbit CLI: issues remain after $max_retries rounds — force-advancing"
         return 0
     fi
     log ERROR "CodeRabbit CLI: issues remain after $max_retries rounds — halting"
-    log ERROR "Set FORCE_ADVANCE_ON_REVIEW_FAIL=true in .specify/project.env to skip"
+    log ERROR "Set FORCE_ADVANCE_ON_REVIEW_ERROR=true in .specify/project.env to skip"
     return 1
 }
 
