@@ -266,9 +266,16 @@ HAS_GH_CLI="$HAS_GH_CLI"
 # Frontend framework detected (auto-detected).
 HAS_FRONTEND="$HAS_FRONTEND"
 
-# Force-advance past CodeRabbit CLI review failures instead of halting.
-# Default: "true" (advance past failures). Set to "false" to halt on CodeRabbit review failures.
-FORCE_ADVANCE_ON_REVIEW_FAIL="true"
+# Force-advance past CodeRabbit CLI review stalls (same issue count for N rounds).
+# Default: "true" (advance past stalls). Set to "false" to halt on stalls.
+FORCE_ADVANCE_ON_REVIEW_STALL="true"
+
+# Force-advance past CodeRabbit CLI review errors (issues remain after max rounds).
+# Default: "true" (advance past errors). Set to "false" to halt on errors.
+FORCE_ADVANCE_ON_REVIEW_ERROR="true"
+
+# Deprecated: use FORCE_ADVANCE_ON_REVIEW_STALL and FORCE_ADVANCE_ON_REVIEW_ERROR above.
+# FORCE_ADVANCE_ON_REVIEW_FAIL="true"
 
 # Preflight tools required by this project (space-separated).
 PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"

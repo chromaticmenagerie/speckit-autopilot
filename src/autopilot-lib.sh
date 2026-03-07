@@ -513,6 +513,8 @@ load_project_config() {
     PROJECT_FORMAT_CMD=""
     BASE_BRANCH="master"
     FORCE_ADVANCE_ON_REVIEW_FAIL="true"
+    FORCE_ADVANCE_ON_REVIEW_STALL=""
+    FORCE_ADVANCE_ON_REVIEW_ERROR=""
     PROJECT_PREFLIGHT_TOOLS=""
     CONVERGENCE_STALL_ROUNDS=2
     CODERABBIT_MAX_ROUNDS=3
@@ -525,6 +527,14 @@ load_project_config() {
 
     set -a; source "$config_file"; set +a
     log INFO "Loaded project config from $config_file"
+
+    # Backwards-compat: derive new flags from legacy flag if not explicitly set
+    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_STALL" ]]; then
+        FORCE_ADVANCE_ON_REVIEW_STALL="${FORCE_ADVANCE_ON_REVIEW_FAIL:-true}"
+    fi
+    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_ERROR" ]]; then
+        FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_FAIL:-true}"
+    fi
 
     if [[ -z "$PROJECT_TEST_CMD" ]]; then
         log WARN "PROJECT_TEST_CMD is empty — test steps will be skipped"
