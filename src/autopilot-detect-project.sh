@@ -282,6 +282,9 @@ PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
 
 # Number of identical issue-count rounds before declaring stall. Default: 2.
 CONVERGENCE_STALL_ROUNDS=2
+
+# Merge strategy for epic branches: "merge" (default, --no-ff merge commit) or "squash" (one commit per epic).
+MERGE_STRATEGY="merge"
 EOF
 
 _ensure_gitignore_logs "$REPO_ROOT"

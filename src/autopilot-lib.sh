@@ -142,7 +142,7 @@ is_epic_merged() {
     local merge_match=""
     for check_branch in $check_branches; do
         merge_match="$(git -C "$repo_root" log "$check_branch" --oneline 2>/dev/null \
-            | grep -i "merge.*${short_name}" || true)"
+            | grep -iE "(merge.*${short_name}|feat\(${short_name%%-*}\):)" || true)"
         [[ -n "$merge_match" ]] && return 0
     done
     return 1
@@ -389,11 +389,16 @@ write_epic_summary() {
     mkdir -p "$log_dir"
 
     local files_changed test_output lint_output
-    # Use the most recent merge commit to count feature branch files
-    local merge_sha
-    merge_sha=$(git -C "$repo_root" log --merges -1 --format=%H 2>/dev/null || true)
-    if [[ -n "$merge_sha" ]]; then
-        files_changed=$(git -C "$repo_root" diff --name-only "${merge_sha}^..${merge_sha}" 2>/dev/null | wc -l || echo 0)
+    # Count feature files by finding this epic's merge/squash commit in the log.
+    # Works for both --no-ff merges ("merge: short_name — ...") and squash
+    # merges ("feat(NNN): ..."), and is immune to intervening commits
+    # (YAML marker, crystallize phase).
+    local epic_sha
+    epic_sha=$(git -C "$repo_root" log --oneline 2>/dev/null \
+        | grep -iE "(merge.*${short_name}|feat\(${epic_num}\):)" \
+        | head -1 | awk '{print $1}' || true)
+    if [[ -n "$epic_sha" ]]; then
+        files_changed=$(git -C "$repo_root" diff --name-only "${epic_sha}^..${epic_sha}" 2>/dev/null | wc -l || echo 0)
     else
         files_changed=$(git -C "$repo_root" diff --name-only HEAD~1..HEAD 2>/dev/null | wc -l || echo 0)
     fi
@@ -518,6 +523,7 @@ load_project_config() {
     PROJECT_PREFLIGHT_TOOLS=""
     CONVERGENCE_STALL_ROUNDS=2
     CODERABBIT_MAX_ROUNDS=3
+    MERGE_STRATEGY="merge"
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."
