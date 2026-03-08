@@ -102,6 +102,7 @@ declare -A PHASE_MAX_RETRIES=(
 # ─── Argument Parsing ────────────────────────────────────────────────────────
 
 TARGET_EPIC=""
+TARGET_EPICS=()   # Array of epic numbers when range is specified
 AUTO_CONTINUE=true
 DRY_RUN=false
 SILENT=false
@@ -139,7 +140,7 @@ parse_args() {
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
                 echo "Options:"
-                echo "  epic-number          Target a specific epic (e.g., 003)"
+                echo "  epic-number          Target a specific epic (e.g., 003) or range (e.g., 003-007)"
                 echo "  --no-auto-continue   Pause between epics instead of auto-continuing"
                 echo "  --dry-run            Show what would happen without invoking claude"
                 echo "  --silent             Suppress live dashboard output (files still written)"
@@ -151,6 +152,18 @@ parse_args() {
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 echo "  --skip-coderabbit    Skip CodeRabbit CLI review during remote merge"
                 exit 0
+                ;;
+            [0-9][0-9][0-9]-[0-9][0-9][0-9])
+                local range_min="${1%%-*}"
+                local range_max="${1##*-}"
+                if [[ 10#$range_min -gt 10#$range_max ]]; then
+                    echo "Invalid range: $range_min > $range_max" >&2
+                    exit 1
+                fi
+                TARGET_EPICS=()
+                for ((i=10#$range_min; i<=10#$range_max; i++)); do
+                    TARGET_EPICS+=("$(printf '%03d' "$i")")
+                done
                 ;;
             [0-9][0-9][0-9])    TARGET_EPIC="$1" ;;
             *)
@@ -957,15 +970,21 @@ main() {
     log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
-    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-* 2>/dev/null; log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; exit 130' INT TERM
+    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-* 2>/dev/null; if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]}"; elif [[ -n "$TARGET_EPIC" ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh $TARGET_EPIC"; else log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; fi; exit 130' INT TERM
 
     while true; do
         # Find next epic
         local epic_info
-        epic_info="$(find_next_epic "$repo_root" "$TARGET_EPIC")"
+        if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then
+            epic_info="$(find_next_epic "$repo_root" "" "$(IFS=,; echo "${TARGET_EPICS[*]}")")"
+        else
+            epic_info="$(find_next_epic "$repo_root" "$TARGET_EPIC")"
+        fi
 
         if [[ -z "$epic_info" ]]; then
-            if [[ -n "$TARGET_EPIC" ]]; then
+            if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then
+                log OK "All epics in range ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]} complete"
+            elif [[ -n "$TARGET_EPIC" ]]; then
                 log ERROR "Epic $TARGET_EPIC not found"
             else
                 log OK "All epics complete!"
@@ -991,6 +1010,18 @@ main() {
         # If targeting a specific epic, stop after it
         if [[ -n "$TARGET_EPIC" ]]; then
             break
+        fi
+        if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then
+            # Remove completed epic from the list
+            local remaining=()
+            for e in "${TARGET_EPICS[@]}"; do
+                [[ "$e" != "$epic_num" ]] && remaining+=("$e")
+            done
+            TARGET_EPICS=("${remaining[@]}")
+            if [[ ${#TARGET_EPICS[@]} -eq 0 ]]; then
+                log OK "Range complete"
+                break
+            fi
         fi
 
         # Auto-continue or pause

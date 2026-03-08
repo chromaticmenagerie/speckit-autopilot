@@ -153,9 +153,23 @@ is_epic_merged() {
 find_next_epic() {
     local repo_root="$1"
     local target_epic="${2:-}"  # Optional: specific epic number to target
+    local target_range="${3:-}"   # comma-separated list of epic numbers
 
     while IFS='|' read -r num status short_name title epic_file; do
         [[ -z "$num" ]] && continue
+
+        # If targeting a range of epics, filter by membership
+        if [[ -n "$target_range" ]]; then
+            if [[ ",${target_range}," != *",${num},"* ]]; then
+                continue
+            fi
+            # Skip merged epics within range
+            if is_epic_merged "$repo_root" "$short_name" "$status"; then
+                continue
+            fi
+            echo "${num}|${short_name}|${title}|${epic_file}"
+            return
+        fi
 
         # If targeting a specific epic, skip others
         if [[ -n "$target_epic" ]]; then
