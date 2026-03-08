@@ -24,6 +24,7 @@ From Claude Code:
 ```
 /autopilot              # Run all remaining epics
 /autopilot 003          # Run specific epic
+/autopilot 003-007      # Run epics 003 through 007
 /autopilot --dry-run    # Preview without invoking Claude
 ```
 

@@ -5,7 +5,7 @@ description: >
   Runs specify, clarify, plan, tasks, analyze, implement, review, merge,
   crystallize, and finalize phases as fresh claude -p invocations.
   Use for: running epics, monitoring progress, dry-run preview.
-argument-hint: "[epic-number] [--dry-run] [--no-auto-continue] [--silent]"
+argument-hint: "[epic-number | epic-range] [--dry-run] [--no-auto-continue] [--silent]"
 disable-model-invocation: true
 ---
 
@@ -65,6 +65,7 @@ All arguments pass through to `autopilot.sh`:
 
 - *(empty)* — auto-detect next unmerged epic, run all remaining epics
 - `NNN` — target a specific epic number (e.g., `004`)
+- `NNN-NNN` — target a range of epics (e.g., `003-007` runs epics 003 through 007)
 - `--dry-run` — preview what would happen without invoking Claude
 - `--no-auto-continue` — pause between epics
 - `--silent` — suppress live dashboard output (files still written)
