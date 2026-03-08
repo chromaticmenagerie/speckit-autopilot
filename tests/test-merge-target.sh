@@ -130,6 +130,43 @@ result="$(detect_merge_target "$repo")"
 assert_eq "custom-branch" "$result" "returns MERGE_TARGET_BRANCH when set, even if staging exists"
 unset MERGE_TARGET_BRANCH
 
+# ─── Squash Merge Detection Tests ───────────────────────────────────────────
+
+echo "Test: is_epic_merged — squash commit detected"
+
+repo="$TMPDIR/repo-squash-commit"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" commit --allow-empty -m "initial" -q
+git -C "$repo" commit --allow-empty -m "feat(004): pages, slugs & navigation (#42)" -q
+
+MERGE_TARGET="$(git -C "$repo" branch --show-current)" BASE_BRANCH="$(git -C "$repo" branch --show-current)"
+is_epic_merged "$repo" "004-pages-slugs-navigation" "draft" && result="true" || result="false"
+assert_eq "true" "$result" "is_epic_merged returns true for squash commit"
+
+echo "Test: is_epic_merged — merge commit detected"
+
+repo="$TMPDIR/repo-merge-commit"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" commit --allow-empty -m "initial" -q
+git -C "$repo" commit --allow-empty -m "merge: 004-pages-slugs-navigation — Pages" -q
+
+MERGE_TARGET="$(git -C "$repo" branch --show-current)" BASE_BRANCH="$(git -C "$repo" branch --show-current)"
+is_epic_merged "$repo" "004-pages-slugs-navigation" "draft" && result="true" || result="false"
+assert_eq "true" "$result" "is_epic_merged returns true for merge commit"
+
+echo "Test: is_epic_merged — YAML status=merged takes priority"
+
+repo="$TMPDIR/repo-yaml-status"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" commit --allow-empty -m "initial" -q
+# No merge commits exist, but YAML says merged
+MERGE_TARGET="$(git -C "$repo" branch --show-current)" BASE_BRANCH="$(git -C "$repo" branch --show-current)"
+is_epic_merged "$repo" "004-pages-slugs-navigation" "merged" && result="true" || result="false"
+assert_eq "true" "$result" "is_epic_merged returns true when yaml_status=merged"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
