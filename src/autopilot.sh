@@ -364,14 +364,26 @@ do_merge() {
         return 1
     fi
 
-    git -C "$repo_root" merge "$short_name" --no-ff \
-        -m "merge: $short_name — $title" || {
-        log ERROR "Merge failed for $short_name"
-        return 1
-    }
+    if [[ "${MERGE_STRATEGY:-merge}" == "squash" ]]; then
+        git -C "$repo_root" merge --squash "$short_name" || {
+            log ERROR "Squash merge failed for $short_name"
+            return 1
+        }
+        git -C "$repo_root" commit -m "feat($epic_num): $title" || {
+            log ERROR "Squash commit failed for $short_name"
+            return 1
+        }
+    else
+        git -C "$repo_root" merge "$short_name" --no-ff \
+            -m "merge: $short_name — $title" || {
+            log ERROR "Merge failed for $short_name"
+            return 1
+        }
+    fi
     log OK "Merged $short_name to $MERGE_TARGET"
 
-    gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md"
+    gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md" || \
+        log WARN "GitHub sync-done failed — continuing"
 
     # Auto-update epic YAML frontmatter
     if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then

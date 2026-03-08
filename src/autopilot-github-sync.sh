@@ -322,7 +322,8 @@ gh_resync() {
         gh_sync_phase "$repo_root" "$num" "$state" "$tasks_file"
 
         if [[ "$state" == "done" ]] || is_epic_merged "$repo_root" "$short_name" "$status" 2>/dev/null; then
-            gh_sync_done "$repo_root" "$num" "$tasks_file"
+            gh_sync_done "$repo_root" "$num" "$tasks_file" || \
+                log WARN "GitHub sync-done failed for epic $num — continuing"
         fi
 
         synced=$((synced + 1))

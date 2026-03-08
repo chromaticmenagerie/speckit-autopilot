@@ -123,6 +123,10 @@ do_remote_merge() {
         return 1
     fi
 
+    # Step 6b: Sync GitHub Projects (close task/epic issues)
+    gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md" || \
+        log WARN "GitHub sync-done failed — continuing with cleanup"
+
     # Step 7: Post-merge cleanup
     _post_merge_cleanup "$repo_root" "$epic_num" "$short_name" "$epic_file"
 
@@ -478,8 +482,15 @@ _check_and_merge_pr() {
         fi
 
         if [[ "$mergeable" == "MERGEABLE" ]]; then
-            cd "$repo_root" && gh pr merge "$pr_num" --merge \
-                --subject "merge: $short_name — $title" || {
+            local merge_flag="--merge"
+            local merge_subject="merge: $short_name — $title"
+            if [[ "${MERGE_STRATEGY:-merge}" == "squash" ]]; then
+                merge_flag="--squash"
+                merge_subject="feat($epic_num): $title (#$pr_num)"
+            fi
+
+            cd "$repo_root" && gh pr merge "$pr_num" $merge_flag \
+                --subject "$merge_subject" || {
                 log ERROR "gh pr merge failed"
                 return 1
             }
@@ -526,15 +537,7 @@ _check_and_merge_pr() {
 _post_merge_cleanup() {
     local repo_root="$1" epic_num="$2" short_name="$3" epic_file="${4:-}"
 
-    # Mark epic as merged FIRST (durable state before cleanup)
-    if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
-        mark_epic_merged "$epic_file" "$short_name"
-        git -C "$repo_root" add "$epic_file"
-        git -C "$repo_root" commit -m "fix($epic_num): mark epic YAML as merged" || true
-        git -C "$repo_root" push origin HEAD || log WARN "Failed to push YAML marker"
-    fi
-
-    # Cleanup: switch to base branch (non-fatal — state is already durable)
+    # Step 1: Switch to base branch FIRST (before any commits)
     git -C "$repo_root" checkout "$MERGE_TARGET" || {
         log WARN "Failed to checkout $MERGE_TARGET after merge — manual cleanup needed"
         return 0
@@ -542,6 +545,14 @@ _post_merge_cleanup() {
     git -C "$repo_root" pull origin "$MERGE_TARGET" || {
         log WARN "git pull failed — continuing"
     }
+
+    # Step 2: Mark epic as merged on the BASE branch (durable state)
+    if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
+        mark_epic_merged "$epic_file" "$short_name"
+        git -C "$repo_root" add "$epic_file"
+        git -C "$repo_root" commit -m "fix($epic_num): mark epic YAML as merged" || true
+        git -C "$repo_root" push origin "$MERGE_TARGET" || log WARN "Failed to push YAML marker"
+    fi
 
     return 0
 }
