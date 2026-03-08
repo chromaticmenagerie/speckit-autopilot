@@ -394,7 +394,7 @@ The skill will:
 - Execute sequential tasks in dependency order
 - Follow strict TDD for each task (test first, implement, verify)
 - Mark each task [x] in tasks.md after completion
-- Commit after each task or logical group
+- The skill does NOT commit — you will commit after verification below
 
 After the skill completes, verify:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "  cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
@@ -408,6 +408,28 @@ When working on frontend/UI components, apply WCAG 2.1 AA accessibility standard
 - Images must have meaningful alt text
 A11Y
 fi)
+
+After tests and lint pass, commit all changes in meaningful groups with good commit messages.
+
+Run: git status --short
+
+Then commit in logical groups. For each group:
+  1. Stage only the files belonging to that group
+  2. If nothing was staged, skip to the next group
+  3. Commit with format: <type>(${epic_num}): <descriptive message>
+
+Recommended grouping (adapt to the actual project structure — skip empty groups):
+  - Database migrations and generated query/model files
+  - Domain/business logic packages (excluding tests)
+  - API contracts, generated stubs, handlers, and server wiring
+  - Frontend routes and components
+  - Test files
+  - Remaining files (config, docs, tooling, tasks.md)
+
+Use "feat" for new functionality, "chore" for config/tooling.
+Stage specific files or directories — never use "git add -A" or "git add ."
+After all groups committed, verify: git status shows a clean working tree.
+If any files still remain: git add -A && git commit -m "chore(${epic_num}): remaining implementation files"
 EOF
 }
 
@@ -559,11 +581,14 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_
 
 5. If any issues remain, fix and commit again.
 
-6. Commit ALL remaining changes (ensure clean working tree for merge):
+6. Verify clean working tree:
    git status
-   git add <all modified/new files relevant to this epic>
-   git commit -m "feat(${epic_num}): final review changes" || echo "Nothing to commit"
-   Verify: git status shows a CLEAN working tree with no uncommitted changes.
+   If uncommitted changes remain, commit them with specific file staging:
+   git add <specific files touched by review fixes>
+   git commit -m "fix(${epic_num}): review cleanup — <brief description>" || true
+   If nothing to commit, proceed.
+   Verify: git status shows a CLEAN working tree.
+   Prefer staging specific files over bulk operations.
 
 7. Report a structured review summary (this will be captured as the review audit trail):
 
