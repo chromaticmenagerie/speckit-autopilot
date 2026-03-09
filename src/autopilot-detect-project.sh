@@ -267,12 +267,12 @@ HAS_GH_CLI="$HAS_GH_CLI"
 HAS_FRONTEND="$HAS_FRONTEND"
 
 # Force-advance past CodeRabbit CLI review stalls (same issue count for N rounds).
-# Default: "true" (advance past stalls). Set to "false" to halt on stalls.
-FORCE_ADVANCE_ON_REVIEW_STALL="true"
+# Default: "false" (halt on stalls). Set to "true" to force-advance past stalls.
+FORCE_ADVANCE_ON_REVIEW_STALL="false"
 
 # Force-advance past CodeRabbit CLI review errors (issues remain after max rounds).
-# Default: "true" (advance past errors). Set to "false" to halt on errors.
-FORCE_ADVANCE_ON_REVIEW_ERROR="true"
+# Default: "false" (halt on errors). Set to "true" to force-advance past errors.
+FORCE_ADVANCE_ON_REVIEW_ERROR="false"
 
 # Deprecated: use FORCE_ADVANCE_ON_REVIEW_STALL and FORCE_ADVANCE_ON_REVIEW_ERROR above.
 # FORCE_ADVANCE_ON_REVIEW_FAIL="true"
