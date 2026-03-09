@@ -23,6 +23,7 @@ _accumulated_input=0
 _accumulated_output=0
 _last_tool=""
 _last_stop_reason="unknown"
+_last_assistant_text=""
 _impl_progress_cache="{}"
 _impl_tasks_mtime=""
 
@@ -42,6 +43,7 @@ process_stream() {
     _accumulated_input=0
     _accumulated_output=0
     _last_tool=""
+    _last_assistant_text=""
 
     # Read existing epic cost from status JSON if available
     if [[ -n "${AUTOPILOT_STATUS_FILE:-}" && -f "$AUTOPILOT_STATUS_FILE" ]]; then
@@ -160,6 +162,10 @@ _process_assistant_event() {
     cache_tok=$(echo "$line" | jq '.message.usage.cache_read_input_tokens // 0' 2>/dev/null || echo 0)
     _accumulated_input=$((_accumulated_input + in_tok + cache_tok))
     _accumulated_output=$((_accumulated_output + out_tok))
+
+    # Capture text blocks for fallback if .result is empty (Claude CLI bug #8126)
+    _last_assistant_text=$(echo "$line" | jq -r \
+        '[.message.content[]? | select(.type=="text") | .text] | join("\n")' 2>/dev/null || echo "")
 }
 
 _process_tool_result() {
@@ -189,6 +195,13 @@ _process_result() {
     duration=$(echo "$line" | jq '.duration_ms // 0' 2>/dev/null)
     cost=$(echo "$line" | jq '.total_cost_usd // 0' 2>/dev/null)
     result_text=$(echo "$line" | jq -r '.result // ""' 2>/dev/null)
+    # Fallback: .result is empty by design on error subtypes and intermittently on success (CLI bug #8126)
+    if [[ -z "$result_text" && -n "$_last_assistant_text" ]]; then
+        result_text="$_last_assistant_text"
+        _used_result_fallback=true
+    else
+        _used_result_fallback=false
+    fi
     subtype=$(echo "$line" | jq -r '.subtype // "unknown"' 2>/dev/null)
     is_error=$(echo "$line" | jq -r '.is_error // false' 2>/dev/null)
     stop_reason="$_last_stop_reason"  # From last assistant event
@@ -265,6 +278,16 @@ _process_result() {
           tokens:{input:$ti, output:$to}}')"
 
     echo "$result_text" > "$phase_log"
+    # Detect empty result and warn (Fix 2)
+    if [[ -z "${result_text// /}" ]]; then
+        log WARN "Phase $phase produced no text output (result is empty)"
+    fi
+    # Emit warning event when fallback was used (observability for CLI bug tracking)
+    if [[ "$_used_result_fallback" == "true" ]]; then
+        _emit_event "$events_log" "phase_warning" \
+            "$(jq -nc --arg e "$epic" --arg p "$phase" --arg msg "result_fallback_used" \
+            '{epic:$e, phase:$p, warning:$msg}')"
+    fi
     _update_status "$status_file" "$epic" "$phase"
 
     if [[ "${SILENT:-false}" != "true" ]]; then
