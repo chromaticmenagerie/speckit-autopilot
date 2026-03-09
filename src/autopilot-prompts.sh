@@ -630,6 +630,8 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_
    - **Tests**: <pass/fail with count>
    - **Lint**: <pass/fail>
    - **Remaining concerns**: <any items that need human attention>
+
+CRITICAL: After completing ALL steps above (including all fixes, commits, and clean working tree verification), your FINAL action MUST be a text response containing the structured review summary above. Do NOT end your session on a git commit, file edit, or any other tool call. The review summary text is captured as the audit trail — if you end on a tool call, the audit trail will be empty.
 EOF
 }
 
