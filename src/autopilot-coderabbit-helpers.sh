@@ -66,6 +66,32 @@ _cr_cli_is_clean() {
     return 0
 }
 
+# ─── Error Classification ──────────────────────────────────────────────────
+
+# Classify CodeRabbit CLI error output into categories.
+# Returns: "rate_limit", "service_error", "auth_error", or "unknown"
+_classify_cr_error() {
+    local output="$1"
+    [[ -z "$output" ]] && echo "unknown" && return
+
+    # Rate limit
+    if echo "$output" | grep -qi "rate.limit\|429\|too many requests"; then
+        echo "rate_limit"; return
+    fi
+
+    # Service/connectivity errors (transient — worth retrying with backoff)
+    if echo "$output" | grep -qi "unknown error\|failed to start review\|connecting to review service\|ECONNREFUSED\|ETIMEDOUT\|socket hang up\|TRPCClientError\|websocket\|network error"; then
+        echo "service_error"; return
+    fi
+
+    # Auth errors (not transient — skip immediately)
+    if echo "$output" | grep -qi "not logged in\|not authenticated\|unauthorized\|401\|auth.*fail\|login required"; then
+        echo "auth_error"; return
+    fi
+
+    echo "unknown"
+}
+
 # ─── Issue Counting ─────────────────────────────────────────────────────────
 
 # Count actionable issues in CLI review output.

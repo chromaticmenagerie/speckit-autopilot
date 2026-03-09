@@ -82,6 +82,37 @@ assert_eq "0" "$rc" "stalled: last 3 identical"
 rc=0; _check_stall "0 0" 2 || rc=$?
 assert_eq "1" "$rc" "not stalled: 0 means clean"
 
+# ─── Tests: _classify_cr_error ─────────────────────────────────────────────
+
+echo "Test: _classify_cr_error"
+
+result=$(_classify_cr_error "")
+assert_eq "unknown" "$result" "empty input"
+
+result=$(_classify_cr_error "429 Too Many Requests")
+assert_eq "rate_limit" "$result" "rate limit 429"
+
+result=$(_classify_cr_error "Rate limit exceeded")
+assert_eq "rate_limit" "$result" "rate limit text"
+
+result=$(_classify_cr_error "$(printf 'Connecting to review service\nREVIEW ERROR: Review failed: Unknown error')")
+assert_eq "service_error" "$result" "unknown error from service"
+
+result=$(_classify_cr_error "Failed to start review: Review failed")
+assert_eq "service_error" "$result" "failed to start review"
+
+result=$(_classify_cr_error "TRPCClientError: connection refused")
+assert_eq "service_error" "$result" "tRPC client error"
+
+result=$(_classify_cr_error "Not logged in. Run coderabbit auth login")
+assert_eq "auth_error" "$result" "not logged in"
+
+result=$(_classify_cr_error "HTTP 401 Unauthorized")
+assert_eq "auth_error" "$result" "401 unauthorized"
+
+result=$(_classify_cr_error "some random error we haven't seen")
+assert_eq "unknown" "$result" "unrecognized error"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
