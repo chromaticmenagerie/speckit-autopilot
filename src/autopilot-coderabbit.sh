@@ -115,7 +115,7 @@ do_remote_merge() {
     LAST_PR_NUMBER="$pr_num"
 
     # Step 5: CodeRabbit PR review — removed in v0.6.0
-    LAST_CR_STATUS="skipped"  # PR review polling removed in v0.6.0 — CLI review is sufficient
+    [[ -z "$LAST_CR_STATUS" ]] && LAST_CR_STATUS="skipped"  # preserve CLI review status if set
 
     # Step 6: Merge PR
     if ! _check_and_merge_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log"; then
@@ -147,15 +147,23 @@ _coderabbit_cli_review() {
 
     log PHASE "CodeRabbit CLI review"
 
+    # Pre-flight: verify CodeRabbit auth
+    if ! coderabbit auth status >/dev/null 2>&1; then
+        log WARN "CodeRabbit CLI not authenticated — skipping review"
+        LAST_CR_STATUS="skipped (not authenticated)"
+        return 0
+    fi
+
     while [[ $attempt -lt $max_retries ]]; do
         attempt=$((attempt + 1))
         log INFO "CodeRabbit CLI review (round $attempt/$max_retries)"
 
-        local tmpfile rc=0 _cr_retry=0
-        while [[ $_cr_retry -lt 2 ]]; do
+        local tmpfile rc=0 _cr_retry=0 _cr_max_retries=3
+        local -a _backoff_secs=(10 30 60)
+        while [[ $_cr_retry -lt $_cr_max_retries ]]; do
             tmpfile=$(mktemp)
             rc=0
-            (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET") \
+            (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET" < /dev/null) \
                 > "$tmpfile" 2>&1 || rc=$?
 
             if [[ $rc -eq 0 ]]; then
@@ -163,41 +171,67 @@ _coderabbit_cli_review() {
             fi
 
             _cr_retry=$((_cr_retry + 1))
-            if [[ $_cr_retry -lt 2 ]]; then
+            if [[ $_cr_retry -lt $_cr_max_retries ]]; then
                 local _cr_output
                 _cr_output=$(<"$tmpfile"); rm -f "$tmpfile"
-                if echo "$_cr_output" | grep -qi "rate.limit\|429\|too many requests"; then
-                    log WARN "CodeRabbit rate limited — skipping CLI review"
-                    return 0
-                fi
-                log WARN "CodeRabbit CLI error (exit $rc) — retrying in 10s"
-                sleep 10
+
+                local _err_type
+                _err_type=$(_classify_cr_error "$_cr_output")
+
+                case "$_err_type" in
+                    rate_limit)
+                        log WARN "CodeRabbit rate limited — skipping CLI review"
+                        LAST_CR_STATUS="skipped (rate limited)"
+                        return 0
+                        ;;
+                    auth_error)
+                        log WARN "CodeRabbit auth error — skipping CLI review (run: coderabbit auth login)"
+                        LAST_CR_STATUS="skipped (auth error — run: coderabbit auth login)"
+                        return 0
+                        ;;
+                    service_error)
+                        local _wait=${_backoff_secs[$_cr_retry - 1]:-60}
+                        log WARN "CodeRabbit service error (exit $rc) — retrying in ${_wait}s (attempt $_cr_retry/$_cr_max_retries)"
+                        sleep "$_wait"
+                        ;;
+                    *)
+                        log WARN "CodeRabbit CLI error (exit $rc) — retrying in 10s (attempt $_cr_retry/$_cr_max_retries)"
+                        sleep 10
+                        ;;
+                esac
             fi
         done
 
-        # Final error handling after retry exhausted
+        # Final error handling after retries exhausted
         if [[ $rc -ne 0 ]]; then
             local output
             output=$(<"$tmpfile"); rm -f "$tmpfile"
+
             # Persist error to diagnostic log
             local error_log="$repo_root/.specify/logs/${epic_num}-coderabbit-errors.log"
             mkdir -p "$repo_root/.specify/logs"
             {
-                echo "--- $(date -u '+%Y-%m-%dT%H:%M:%SZ') | round $attempt | exit $rc ---"
+                echo "--- $(date -u '+%Y-%m-%dT%H:%M:%SZ') | round $attempt | exit $rc | retries $_cr_retry ---"
                 echo "$output" | head -20
                 echo ""
             } >> "$error_log"
-            # Emit structured event
-            local _err_snippet
+
+            # Emit structured event with error classification
+            local _err_snippet _err_type
             _err_snippet=$(echo "$output" | head -5 | tr '\n' ' ' | cut -c1-300)
+            _err_type=$(_classify_cr_error "$output")
             _emit_event "$events_log" "coderabbit_cli_error" \
-                "$(jq -nc --arg e "$epic_num" --argjson rc "$rc" --arg err "$_err_snippet" --argjson retry "$_cr_retry" \
-                    '{epic:$e, exit_code:$rc, error_snippet:$err, retry_count:$retry}')"
-            if echo "$output" | grep -qi "rate.limit\|429\|too many requests"; then
-                log WARN "CodeRabbit rate limited — skipping CLI review"
-                return 0
-            fi
-            log WARN "CodeRabbit CLI error (exit $rc) after retry — skipping"
+                "$(jq -nc --arg e "$epic_num" --argjson rc "$rc" --arg err "$_err_snippet" \
+                    --argjson retry "$_cr_retry" --arg etype "$_err_type" \
+                    '{epic:$e, exit_code:$rc, error_snippet:$err, retry_count:$retry, error_type:$etype}')"
+
+            case "$_err_type" in
+                rate_limit)   LAST_CR_STATUS="skipped (rate limited)" ;;
+                service_error) LAST_CR_STATUS="skipped (service error after $_cr_retry retries)" ;;
+                auth_error)   LAST_CR_STATUS="skipped (auth error — run: coderabbit auth login)" ;;
+                *)            LAST_CR_STATUS="skipped (CLI error: exit $rc)" ;;
+            esac
+            log WARN "CodeRabbit CLI: $LAST_CR_STATUS"
             return 0
         fi
 
@@ -223,6 +257,7 @@ _coderabbit_cli_review() {
             log OK "CodeRabbit CLI review: clean"
             _emit_event "$events_log" "coderabbit_cli_clean" \
                 "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
+            LAST_CR_STATUS="clean"
             return 0
         fi
 
@@ -238,6 +273,7 @@ _coderabbit_cli_review() {
                 "$(jq -nc --arg e "$epic_num" --argjson ic "$_cli_issue_count" '{epic:$e, issue_count:$ic}')"
             if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]]; then
                 log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (stall detected)"
+                LAST_CR_STATUS="force-advanced (stall after $attempt rounds)"
                 return 0
             fi
             return 2
@@ -246,6 +282,7 @@ _coderabbit_cli_review() {
         # Early exit when force-advance is enabled and we've completed enough rounds
         if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
             log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (diminishing returns)"
+            LAST_CR_STATUS="force-advanced (diminishing returns after $attempt rounds)"
             return 0
         fi
         _emit_event "$events_log" "coderabbit_cli_issues" \
@@ -261,6 +298,7 @@ _coderabbit_cli_review() {
 
     if [[ "${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}" == "true" ]]; then
         log WARN "CodeRabbit CLI: issues remain after $max_retries rounds — force-advancing"
+        LAST_CR_STATUS="force-advanced (issues remain after $max_retries rounds)"
         return 0
     fi
     log ERROR "CodeRabbit CLI: issues remain after $max_retries rounds — halting"
