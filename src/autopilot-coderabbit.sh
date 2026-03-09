@@ -85,9 +85,7 @@ do_remote_merge() {
     if [[ "${HAS_CODERABBIT:-false}" == "true" ]] && [[ "${SKIP_CODERABBIT:-false}" != "true" ]]; then
         local _cli_rc=0
         _coderabbit_cli_review "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file" "$events_log" || _cli_rc=$?
-        if [[ $_cli_rc -eq 2 ]]; then
-            log WARN "CodeRabbit CLI stalled — continuing to push/PR"
-        elif [[ $_cli_rc -ne 0 ]]; then
+        if [[ $_cli_rc -ne 0 ]]; then
             return 1
         fi
     fi
@@ -139,7 +137,7 @@ do_remote_merge() {
 # ─── CodeRabbit CLI Review ──────────────────────────────────────────────────
 
 # Convergence loop: run CLI → parse → Claude fix → retry (max 3).
-# Non-blocking: always returns 0 (force-advances on failure/rate-limit).
+# Returns 0 on clean/force-advance/skip, 1 on unresolved issues or stall (when force-advance disabled).
 _coderabbit_cli_review() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5" events_log="$6"
     local max_retries=${CODERABBIT_MAX_ROUNDS:-3} attempt=0
@@ -276,7 +274,8 @@ _coderabbit_cli_review() {
                 LAST_CR_STATUS="force-advanced (stall after $attempt rounds)"
                 return 0
             fi
-            return 2
+            LAST_CR_STATUS="halted (stall after $attempt rounds, $_cli_issue_count issues unresolved)"
+            return 1
         fi
 
         # Early exit when force-advance is enabled and we've completed enough rounds
@@ -303,6 +302,7 @@ _coderabbit_cli_review() {
     fi
     log ERROR "CodeRabbit CLI: issues remain after $max_retries rounds — halting"
     log ERROR "Set FORCE_ADVANCE_ON_REVIEW_ERROR=true in .specify/project.env to skip"
+    LAST_CR_STATUS="halted (issues remain after $max_retries rounds)"
     return 1
 }
 
