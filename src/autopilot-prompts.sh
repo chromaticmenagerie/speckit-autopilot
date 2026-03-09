@@ -244,6 +244,7 @@ EOF
 
 prompt_design_read() {
     local epic_num="$1" title="$2" repo_root="$3" spec_dir="$4" pen_file="$5"
+    local pen_structure="${6:-}"
     local spec_dir_name
     spec_dir_name="$(basename "$spec_dir")"
     cat <<'SCHEMA_EOF'
@@ -272,7 +273,6 @@ SCHEMA_EOF
 
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-Read the design file at: ${pen_file}
 Also read the spec at: ${spec_dir}/spec.md
 
 The .pen file is plain JSON (Pencil format). Use the schema reference above to parse it.
@@ -301,6 +301,36 @@ Extract and organize the following from the .pen JSON:
 6. SCREEN-TO-REQUIREMENT MAPPING: Cross-reference screen names with requirements
    and user stories in spec.md. Map each screen to relevant functional requirements.
 
+EOF
+
+    if [[ -n "$pen_structure" ]]; then
+        cat <<PREPARSE
+
+## Pre-extracted .pen Structure
+
+The .pen file has been pre-parsed. The structural data below contains ALL screens (light, dark, desktop, tablet, mobile) with full component hierarchy. Use this data directly — do NOT attempt to read the .pen file.
+
+<pen-structure>
+${pen_structure}
+</pen-structure>
+
+Using the pre-extracted data above, produce the design-context.md file following the output format below. You still need to:
+1. Name and describe layout patterns from the tree structure
+2. Cross-reference screens with specs/${spec_dir_name}/spec.md for the Screen-to-Requirement Mapping
+3. Write Implementation Notes (icon library, breakpoints, typography scale, color palette summary)
+4. Enforce Theme Integration rules
+
+PREPARSE
+    else
+        cat <<FALLBACK
+
+Read the .pen file at: ${pen_file}
+Extract ALL structural information following the extraction instructions above.
+
+FALLBACK
+    fi
+
+    cat <<EOF
 ── Output ──
 Write the extracted context to: ${spec_dir}/design-context.md
 
@@ -745,8 +775,8 @@ prompt_coderabbit_fix() {
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-CodeRabbit has reviewed changes on branch ${short_name} and found issues.
-Fix ALL issues identified below, then verify.
+CodeRabbit has reviewed changes on branch ${short_name} and found potential issues.
+Verify each finding against the actual code before acting on it.
 
 CODERABBIT REVIEW OUTPUT:
 \`\`\`
@@ -754,11 +784,13 @@ ${review_output}
 \`\`\`
 
 Instructions:
-1. Read each issue carefully — understand the file and line referenced.
-2. Read the relevant source files.
-3. Fix all CRITICAL and HIGH severity issues — these are mandatory.
-   For MEDIUM issues: fix only if straightforward (< 5 lines changed).
-   For LOW issues: do NOT fix them. Log them as accepted tech debt in a brief code comment if appropriate.
+1. Read each finding carefully — understand the file and line referenced.
+2. Read the relevant source files to verify whether the finding is a real issue.
+3. For each finding, decide: is this a genuine bug, security issue, or correctness problem in the actual code?
+   - YES (real issue): fix it.
+   - NO (false positive, already handled, or trivial style nit): skip it — do not change code for non-issues.
+   Skip findings that only affect docs, spec files, or formatting unless they cause runtime problems.
+   If findings include severity labels, prioritize CRITICAL and HIGH; fix MEDIUM only if straightforward (< 5 lines).
    Focus your effort on the issues that matter most.
 4. After fixing, verify:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
