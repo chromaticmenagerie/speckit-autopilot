@@ -45,10 +45,9 @@ _cr_pr_comments() {
 }
 
 # Check if CodeRabbit CLI output indicates clean review.
-# Severity filtering: only CRITICAL and HIGH findings count as "not clean."
-# LOW, INFO, and MEDIUM findings are ignored to avoid infinite convergence
-# loops — prompt_coderabbit_fix tells Claude to skip LOW and only optionally
-# fix MEDIUM, so the clean check must align with that policy.
+# Primary: parse "Review completed: N findings" summary line from --prompt-only output.
+# Fallback: severity regex for non-prompt-only formats.
+# Format guard: long output with finding separators but no recognized summary = not clean.
 _cr_cli_is_clean() {
     local output="$1"
     [[ -z "$output" ]] && return 0
@@ -56,13 +55,27 @@ _cr_cli_is_clean() {
     echo "$output" | grep -qi "no issues\|no problems\|looks good\|no suggestions\|no findings" && return 0
     # If very short (< 50 chars), likely a "nothing to report" message
     [[ ${#output} -lt 50 ]] && return 0
-    # Severity filter: only fail on CRITICAL or HIGH findings.
-    # Matches patterns like "**Severity**: CRITICAL", "severity: high",
-    # "Severity: CRITICAL", "[CRITICAL]", "[HIGH]", etc.
+
+    # Primary: parse --prompt-only summary line "Review completed: N findings"
+    local finding_count
+    finding_count=$(echo "$output" | grep -oE 'Review completed: [0-9]+ findings' | grep -oE '[0-9]+' || echo "")
+    if [[ -n "$finding_count" ]]; then
+        (( finding_count > 0 )) && return 1
+        return 0
+    fi
+
+    # Fallback: severity regex for non-prompt-only formats
     if echo "$output" | grep -qiE '\*{0,2}severity\*{0,2}\s*:?\s*(critical|high)|\[(critical|high)\]'; then
         return 1
     fi
-    # No CRITICAL/HIGH findings — treat as clean even if LOW/MEDIUM/INFO remain
+
+    # Format guard: long output with finding separators but no recognized summary
+    # Fail-closed to prevent silent skip of unrecognized review output
+    if [[ ${#output} -gt 200 ]] && echo "$output" | grep -qE '^={10,}$'; then
+        log WARN "CodeRabbit output has finding separators but no recognized summary — treating as not clean"
+        return 1
+    fi
+
     return 0
 }
 
@@ -92,23 +105,27 @@ _classify_cr_error() {
     echo "unknown"
 }
 
-# ─── Issue Counting ─────────────────────────────────────────────────────────
-
 # Count actionable issues in CLI review output.
-# Primary: unique file:line references (works with --prompt-only prose output).
-# Fallback: numbered/bullet lists and line-start file:line patterns.
-# Uses whichever method finds more issues to avoid undercounting.
+# Primary: parse "Review completed: N findings" summary line (accurate for --prompt-only).
+# Fallback: unique file:line references and list-pattern matching.
 _count_cli_issues() {
     local output="$1"
     [[ -z "$output" ]] && echo "0" && return
+
+    # Primary: parse --prompt-only summary line
+    local summary_count
+    summary_count=$(echo "$output" | grep -oE 'Review completed: [0-9]+ findings' | grep -oE '[0-9]+' || echo "")
+    if [[ -n "$summary_count" ]]; then
+        echo "$summary_count"
+        return
+    fi
+
+    # Fallback: heuristic counting for non-prompt-only formats
     local count=0
-    # Primary: count unique file:line references (inline in prose)
     local file_refs
     file_refs=$(echo "$output" | grep -oE '[a-zA-Z0-9_/.+-]+\.(go|ts|tsx|js|jsx|svelte|py|sh|sql|yaml|yml|md|css|html):[0-9]+' | sort -u | wc -l)
-    # Fallback: original list-pattern matching
     local list_count
     list_count=$(echo "$output" | grep -cE '^\s*[0-9]+\.|^\s*[-*]\s|^[^[:space:]]+:[0-9]+' || true)
-    # Use whichever finds more issues
     if [[ "$file_refs" -gt "$list_count" ]]; then
         count=$file_refs
     else

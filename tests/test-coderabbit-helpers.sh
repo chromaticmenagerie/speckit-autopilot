@@ -50,6 +50,62 @@ assert_eq "1" "$result" "file:line pattern"
 result=$(_count_cli_issues "binary garbage")
 assert_eq "0" "$result" "no actionable patterns"
 
+result=$(_count_cli_issues "$(printf 'Some preamble\n\nReview completed: 13 findings')")
+assert_eq "13" "$result" "summary line: 13 findings"
+
+result=$(_count_cli_issues "$(printf 'Review completed: 0 findings')")
+assert_eq "0" "$result" "summary line: 0 findings"
+
+result=$(_count_cli_issues "$(printf 'Review completed: 1 findings')")
+assert_eq "1" "$result" "summary line: 1 finding"
+
+# ─── Tests: _cr_cli_is_clean ──────────────────────────────────────────────
+
+echo "Test: _cr_cli_is_clean"
+
+rc=0; _cr_cli_is_clean "" || rc=$?
+assert_eq "0" "$rc" "empty input = clean"
+
+rc=0; _cr_cli_is_clean "all good" || rc=$?
+assert_eq "0" "$rc" "short input = clean"
+
+rc=0; _cr_cli_is_clean "No issues found in the reviewed code." || rc=$?
+assert_eq "0" "$rc" "no issues text = clean"
+
+rc=0; _cr_cli_is_clean "No findings detected." || rc=$?
+assert_eq "0" "$rc" "no findings text = clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Starting review...\n\nReview completed: 0 findings')" || rc=$?
+assert_eq "0" "$rc" "Review completed: 0 findings = clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Starting CodeRabbit review in plain text mode...\nConnecting to review service\nSetting up\nAnalyzing\nReviewing\n\nReview completed: 13 findings')" || rc=$?
+assert_eq "1" "$rc" "Review completed: 13 findings = not clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Starting CodeRabbit review in plain text mode...\nConnecting to review service\nSetting up\nAnalyzing\nReviewing\n\nReview completed: 1 findings')" || rc=$?
+assert_eq "1" "$rc" "Review completed: 1 findings = not clean"
+
+# Severity fallback (non-prompt-only formats)
+rc=0; _cr_cli_is_clean "$(printf 'Long enough output to pass length check!!!\n**Severity**: CRITICAL\nSome issue found')" || rc=$?
+assert_eq "1" "$rc" "severity CRITICAL = not clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Long enough output to pass length check!!!\n**Severity**: HIGH\nSome issue found')" || rc=$?
+assert_eq "1" "$rc" "severity HIGH = not clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Long enough output to pass length check!!!\n[CRITICAL] buffer overflow detected')" || rc=$?
+assert_eq "1" "$rc" "bracketed CRITICAL = not clean"
+
+rc=0; _cr_cli_is_clean "$(printf 'Long enough output to pass length check!!!\n**Severity**: MEDIUM\nSome minor issue')" || rc=$?
+assert_eq "0" "$rc" "severity MEDIUM only = clean (no CRITICAL/HIGH)"
+
+# Format guard: long output with separators but no summary line
+SEPARATOR="$(printf '=%.0s' {1..76})"
+rc=0; _cr_cli_is_clean "$(printf 'Starting CodeRabbit review\nConnecting to service\nAnalyzing\n%s\nFile: foo.go\nLine: 10\nType: potential_issue\nSome long finding description that makes this output definitely over 200 chars long enough to trigger the guard and ensure we test correctly' "$SEPARATOR")" || rc=$?
+assert_eq "1" "$rc" "format guard: separators without summary = not clean"
+
+# No format guard for non-CR output
+rc=0; _cr_cli_is_clean "$(printf 'This is just a long text output that has nothing to do with CodeRabbit and should not trigger the format guard because it lacks separator lines even though it is over 200 characters long enough to pass the length check')" || rc=$?
+assert_eq "0" "$rc" "long non-CR output without separators = clean"
+
 # ─── Tests: _count_pr_issues ────────────────────────────────────────────────
 
 echo "Test: _count_pr_issues"
