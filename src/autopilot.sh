@@ -30,6 +30,7 @@ source "$SCRIPT_DIR/autopilot-coderabbit.sh"
 source "$SCRIPT_DIR/autopilot-verify.sh"
 source "$SCRIPT_DIR/autopilot-finalize.sh"
 source "$SCRIPT_DIR/autopilot-validate.sh"
+source "$SCRIPT_DIR/autopilot-design.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -251,13 +252,15 @@ run_phase() {
             prompt="$(prompt_plan "$epic_num" "$title" "$repo_root")"
             ;;
         design-read)
-            local pen_file
+            local pen_file pen_structure
             pen_file="$(find_pen_file "$repo_root" "$epic_num")"
             if [[ -z "$pen_file" ]]; then
                 log WARN "design-read: no .pen file found — skipping"
                 return 0
             fi
-            prompt="$(prompt_design_read "$epic_num" "$title" "$repo_root" "$spec_dir" "$pen_file")"
+            log INFO "design-read: pre-extracting .pen structure via jq"
+            pen_structure="$(extract_pen_structure "$pen_file")"
+            prompt="$(prompt_design_read "$epic_num" "$title" "$repo_root" "$spec_dir" "$pen_file" "$pen_structure")"
             ;;
         tasks)
             prompt="$(prompt_tasks "$epic_num" "$title" "$repo_root")"
