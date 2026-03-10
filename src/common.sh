@@ -154,3 +154,32 @@ EOF
 check_file() { [[ -f "$1" ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
 check_dir() { [[ -d "$1" && -n $(ls -A "$1" 2>/dev/null) ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
 
+# update_managed_section FILEPATH BLOCK_NAME CONTENT
+# - If markers exist: replace content between them (awk-based)
+# - If markers absent: append new block at end of file
+# - If file doesn't exist: create with block
+# - Idempotent, safe for concurrent-free manual execution
+update_managed_section() {
+    local filepath="$1" block_name="$2" content="$3"
+    local begin_marker="<!-- BEGIN ${block_name} MANAGED BLOCK -->"
+    local end_marker="<!-- END ${block_name} MANAGED BLOCK -->"
+
+    if [[ ! -f "$filepath" ]]; then
+        # File doesn't exist — create with block
+        printf '%s\n%s\n%s\n' "$begin_marker" "$content" "$end_marker" > "$filepath"
+        return
+    fi
+
+    if grep -qF "$begin_marker" "$filepath"; then
+        # Markers exist — replace content between them
+        CONTENT="$content" awk -v begin="$begin_marker" -v end="$end_marker" '
+            $0 == begin { print; printf "%s\n", ENVIRON["CONTENT"]; skip=1; next }
+            $0 == end   { skip=0 }
+            !skip       { print }
+        ' "$filepath" > "${filepath}.tmp" && mv "${filepath}.tmp" "$filepath"
+    else
+        # Markers absent — append block at end
+        printf '\n%s\n%s\n%s\n' "$begin_marker" "$content" "$end_marker" >> "$filepath"
+    fi
+}
+
