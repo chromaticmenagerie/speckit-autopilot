@@ -148,7 +148,7 @@ Re-run the install command. It detects the installed version and only copies fil
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI (`claude` command)
 - `jq` (for NDJSON stream processing)
-- `bash` 4+
+- `bash` 4.3+
 - Git
 
 ## License
