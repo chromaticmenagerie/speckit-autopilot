@@ -240,6 +240,8 @@ _classify_codex_error() {
 
 # ─── Claude Self-Review Helpers ───────────────────────────────────────────────
 
+# Cleanness gate: CRITICAL/HIGH only (blocking). MEDIUM is intentionally
+# non-blocking — tracked by _count_self_issues for trend analysis.
 _self_review_is_clean() {
     local output="$1"
     [[ -z "$output" ]] && return 1
@@ -253,6 +255,8 @@ _self_review_is_clean() {
     return 1
 }
 
+# Issue counter: includes MEDIUM for convergence trend tracking.
+# Intentional asymmetry with _self_review_is_clean (which excludes MEDIUM).
 _count_self_issues() {
     local output="$1"
     local count
