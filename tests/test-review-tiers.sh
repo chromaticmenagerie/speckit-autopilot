@@ -379,6 +379,90 @@ assert_eq "0" "$rc" "multiline: header preserved"
 rc=0; grep -qF "Trailing paragraph" "$MULTI_CONTENT_FILE" || rc=$?
 assert_eq "0" "$rc" "multiline: trailing content preserved"
 
+# ─── Tests: Tier-skip (HAS_CODERABBIT / HAS_CODEX) ──────────────────────────
+
+echo "Test: Tier-skip guards"
+
+# Stubs needed for tier functions (autopilot-review.sh not sourced in this file)
+_emit_event() { :; }
+invoke_claude() { return 0; }
+prompt_review_fix() { echo "fix prompt stub"; }
+prompt_self_review() { echo "self review prompt stub"; }
+prompt_self_review_chunk() { echo "chunk prompt stub"; }
+ensure_coderabbit_config() { :; }
+
+# Point SCRIPT_DIR to src/ so autopilot-review.sh can source its helpers
+SCRIPT_DIR="$SRC_DIR"
+source "$SRC_DIR/autopilot-review.sh"
+
+# HAS_CODERABBIT=false → _tier_coderabbit_cli returns 2 (skip)
+HAS_CODERABBIT=false
+rc=0; _tier_coderabbit_cli "/tmp" "main" || rc=$?
+assert_eq "2" "$rc" "HAS_CODERABBIT=false → tier returns 2"
+
+# HAS_CODEX=false → _tier_codex returns 2 (skip)
+HAS_CODEX=false
+rc=0; _tier_codex "/tmp" "main" || rc=$?
+assert_eq "2" "$rc" "HAS_CODEX=false → tier returns 2"
+
+# ─── Tests: Backward-compat config aliases ───────────────────────────────────
+
+echo "Test: Backward-compat config aliases"
+
+# Replicate alias logic from autopilot-lib.sh (lines 560-577) inline
+# to avoid sourcing autopilot-lib.sh which has heavy side effects.
+
+# Test 1: SKIP_CODERABBIT=true → SKIP_REVIEW=true
+result=$(SKIP_CODERABBIT=true bash -c 'SKIP_REVIEW="${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}"; echo "$SKIP_REVIEW"')
+assert_eq "true" "$result" "SKIP_CODERABBIT=true → SKIP_REVIEW=true"
+
+# Test 2: FORCE_ADVANCE_ON_REVIEW_FAIL=true → both STALL and ERROR = true
+result=$(
+    FORCE_ADVANCE_ON_REVIEW_STALL=""
+    FORCE_ADVANCE_ON_REVIEW_ERROR=""
+    FORCE_ADVANCE_ON_REVIEW_FAIL=true
+    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_STALL" ]]; then
+        FORCE_ADVANCE_ON_REVIEW_STALL="${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}"
+    fi
+    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_ERROR" ]]; then
+        FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}"
+    fi
+    echo "${FORCE_ADVANCE_ON_REVIEW_STALL},${FORCE_ADVANCE_ON_REVIEW_ERROR}"
+)
+assert_eq "true,true" "$result" "FORCE_ADVANCE_ON_REVIEW_FAIL=true → STALL+ERROR=true"
+
+# Test 3: HAS_CODERABBIT=true HAS_CODEX=false → tier order = cli,self
+result=$(
+    REVIEW_TIER_ORDER=""
+    HAS_CODERABBIT=true
+    HAS_CODEX=false
+    if [[ -z "$REVIEW_TIER_ORDER" ]]; then
+        tiers=""
+        [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
+        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        tiers="${tiers:+$tiers,}self"
+        REVIEW_TIER_ORDER="$tiers"
+    fi
+    echo "$REVIEW_TIER_ORDER"
+)
+assert_eq "cli,self" "$result" "HAS_CODERABBIT=true HAS_CODEX=false → cli,self"
+
+# Test 4: HAS_CODERABBIT=false HAS_CODEX=true → tier order = codex,self
+result=$(
+    REVIEW_TIER_ORDER=""
+    HAS_CODERABBIT=false
+    HAS_CODEX=true
+    if [[ -z "$REVIEW_TIER_ORDER" ]]; then
+        tiers=""
+        [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
+        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        tiers="${tiers:+$tiers,}self"
+        REVIEW_TIER_ORDER="$tiers"
+    fi
+    echo "$REVIEW_TIER_ORDER"
+)
+assert_eq "codex,self" "$result" "HAS_CODERABBIT=false HAS_CODEX=true → codex,self"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
