@@ -262,7 +262,7 @@ _review_fix_loop() {
         fi
 
         # Early exit: diminishing returns after 2+ rounds
-        if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
+        if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge ${DIMINISHING_RETURNS_THRESHOLD:-2} ]]; then
             LAST_CR_STATUS="force-advanced (diminishing returns, tier: $tier, round $attempt)"
             log WARN "Force-advancing after $attempt rounds (diminishing returns)"
             _emit_event "$events_log" "review_convergence_complete" \
