@@ -21,6 +21,13 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 # Set by tier functions when issues are found (return 1).
 TIER_OUTPUT=""
 
+_REVIEW_PATHSPEC_EXCLUDES=(
+    ':(exclude)*.lock'
+    ':(exclude)**/node_modules/**'
+    ':(exclude)dist'
+    ':(exclude)*.gen.*'
+)
+
 # ─── Tier 1: CodeRabbit CLI ─────────────────────────────────────────────────
 
 # Tier 1: CodeRabbit CLI review
@@ -324,7 +331,7 @@ _tier_codex() {
     # ── DIFF SIZE GUARD ──
     local diff_bytes
     diff_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
-        -- ':(exclude)*.lock' ':(exclude)node_modules' ':(exclude)dist' ':(exclude)*.gen.*' \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
         | wc -c | xargs)
 
     if [[ $diff_bytes -gt ${CODEX_MAX_DIFF_BYTES:-800000} ]]; then
@@ -344,7 +351,7 @@ If no issues found, set overall_correctness to true with an empty findings array
 REVIEW_PROMPT
     # Append the actual diff
     git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
-        -- ':(exclude)*.lock' ':(exclude)node_modules' ':(exclude)dist' ':(exclude)*.gen.*' \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
         >> "$prompt_file"
 
     log INFO "Running codex review (timeout: ${timeout_secs}s, diff: ${diff_bytes} bytes)"
@@ -398,7 +405,7 @@ _tier_claude_self_review() {
     # Check diff size before sending
     local diff_bytes
     diff_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
-        -- ':(exclude)*.lock' ':(exclude)node_modules' ':(exclude)dist' ':(exclude)*.gen.*' \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
         | wc -c | xargs)
 
     local est_tokens=$(( diff_bytes / 4 ))
@@ -439,7 +446,7 @@ _tier_claude_self_review_chunked() {
     # still exceeds 60K tokens.
     local dirs
     dirs=$(git -C "$repo_root" diff --name-only "origin/${merge_target}...HEAD" \
-        -- ':(exclude)*.lock' ':(exclude)node_modules' ':(exclude)dist' ':(exclude)*.gen.*' \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
         | cut -d'/' -f1 | sort -u)
 
     local all_findings=""
@@ -449,6 +456,8 @@ _tier_claude_self_review_chunked() {
         [[ -z "$dir" ]] && continue
         chunk_num=$((chunk_num + 1))
 
+        # Note: chunk-scoped diffs intentionally omit _REVIEW_PATHSPEC_EXCLUDES
+        # (pre-filtered by dir listing above; re-applying would misreport chunk sizes)
         local chunk_bytes
         chunk_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" -- "$dir" | wc -c | xargs)
         local chunk_tokens=$(( chunk_bytes / 4 ))
