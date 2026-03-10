@@ -113,7 +113,7 @@ mkdir -p "Design/Pencil Files"
 DEST=".specify/scripts/bash"
 mkdir -p "$DEST"
 
-for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-coderabbit.sh autopilot-coderabbit-helpers.sh autopilot-design.sh autopilot-finalize.sh autopilot-verify.sh autopilot-watch.sh autopilot-validate.sh common.sh; do
+for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-review.sh autopilot-review-helpers.sh autopilot-merge.sh autopilot-design.sh autopilot-finalize.sh autopilot-verify.sh autopilot-watch.sh autopilot-validate.sh common.sh codex-review-schema.json; do
     if [[ -f "$SRC_DIR/src/$script" ]]; then
         cp "$SRC_DIR/src/$script" "$DEST/$script"
         chmod +x "$DEST/$script"
@@ -122,7 +122,32 @@ for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompt
     fi
 done
 
+# Remove renamed scripts (pre-v0.9.6: coderabbit → review + merge split)
+for legacy in autopilot-coderabbit.sh autopilot-coderabbit-helpers.sh; do
+    if [[ -f "$DEST/$legacy" ]]; then
+        rm -f "$DEST/$legacy"
+        info "Cleaned up renamed script: $legacy"
+    fi
+done
+
 info "Scripts installed to $DEST/"
+
+# ── Codex project instructions (marker-based to preserve speckit-core content) ──
+source "$DEST/common.sh"
+AGENTS_CONTENT=$(cat <<'AGENTS_EOF'
+# Codex Review Instructions
+## Project Context
+Bash orchestrator for AI-powered dev pipelines. All scripts run under set -euo pipefail.
+## Intentional Patterns (do NOT flag)
+- `|| true` after grep/git — deliberate pipefail protection
+- `|| var=0` after grep -c — canonical safe pattern
+- `$()` subshells with `|| exit_code=$?` — deliberate error capture
+- Global variables (LAST_CR_STATUS, LAST_PR_NUMBER) — shared state between sourced scripts
+## Focus Areas
+- Bugs, security, correctness — NOT style, naming, comments
+AGENTS_EOF
+)
+update_managed_section "AGENTS.md" "SPECKIT-AUTOPILOT" "$AGENTS_CONTENT"
 
 # ─── Step 5: Install skill file ─────────────────────────────────────────────
 
