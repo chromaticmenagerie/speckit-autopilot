@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-coderabbit-helpers.sh — Unit tests for CodeRabbit helper functions
+# test-review-helpers.sh — Unit tests for review helper functions
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +29,7 @@ assert_eq() {
 log() { :; }
 
 # Source helpers
-source "$SRC_DIR/autopilot-coderabbit-helpers.sh"
+source "$SRC_DIR/autopilot-review-helpers.sh"
 
 # ─── Tests: _count_cli_issues ───────────────────────────────────────────────
 
@@ -105,19 +105,6 @@ assert_eq "1" "$rc" "format guard: separators without summary = not clean"
 # No format guard for non-CR output
 rc=0; _cr_cli_is_clean "$(printf 'This is just a long text output that has nothing to do with CodeRabbit and should not trigger the format guard because it lacks separator lines even though it is over 200 characters long enough to pass the length check')" || rc=$?
 assert_eq "0" "$rc" "long non-CR output without separators = clean"
-
-# ─── Tests: _count_pr_issues ────────────────────────────────────────────────
-
-echo "Test: _count_pr_issues"
-
-result=$(_count_pr_issues "")
-assert_eq "0" "$result" "empty input"
-
-result=$(_count_pr_issues "$(printf 'comment1\n---\ncomment2\n---\ncomment3')")
-assert_eq "3" "$result" "3 comments separated by ---"
-
-result=$(_count_pr_issues "single comment no separator")
-assert_eq "1" "$result" "single comment no separator"
 
 # ─── Tests: _check_stall ────────────────────────────────────────────────────
 
