@@ -219,6 +219,8 @@ HAS_CODERABBIT="false"
 HAS_REMOTE="false"
 HAS_GH_CLI="false"
 detect_coderabbit_cli && HAS_CODERABBIT="true"
+HAS_CODEX="false"
+command -v codex &>/dev/null && HAS_CODEX="true"
 detect_remote && HAS_REMOTE="true"
 detect_gh_cli && HAS_GH_CLI="true"
 
@@ -256,6 +258,17 @@ BASE_BRANCH="$BASE_BRANCH"
 
 # CodeRabbit CLI available (auto-detected).
 HAS_CODERABBIT="$HAS_CODERABBIT"
+
+# Codex CLI available (auto-detected).
+HAS_CODEX="$HAS_CODEX"
+
+# CodeRabbit review max rounds per convergence loop.
+CODERABBIT_MAX_ROUNDS=3
+# REVIEW_TIER_ORDER=""    # Auto-detected. Override: cli,codex,self
+# CODEX_REVIEW_TIMEOUT=300
+# CODEX_MAX_DIFF_BYTES=800000
+# CODEX_MAX_ROUNDS=3
+# CLAUDE_SELF_REVIEW_MAX_ROUNDS=2
 
 # Git remote origin exists (auto-detected).
 HAS_REMOTE="$HAS_REMOTE"

@@ -770,17 +770,26 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   ${PROJECT_LINT_CMD}"; fi)
 EOF
 }
 
-# ─── Phase: CodeRabbit Fix (resolve CodeRabbit review findings) ─────────────
+# ─── Phase: Review Fix (resolve code review findings — tier-aware) ────────────
 
-prompt_coderabbit_fix() {
-    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" review_output="$5"
+prompt_review_fix() {
+    local tier="$1" epic_num="$2" title="$3" repo_root="$4" short_name="$5" review_output="$6"
+
+    local tier_label
+    case "$tier" in
+        cli)    tier_label="CodeRabbit" ;;
+        codex)  tier_label="Codex" ;;
+        self)   tier_label="Claude adversarial review" ;;
+        *)      tier_label="Code review ($tier)" ;;
+    esac
+
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-CodeRabbit has reviewed changes on branch ${short_name} and found potential issues.
+${tier_label} has reviewed changes on branch ${short_name} and found potential issues.
 Verify each finding against the actual code before acting on it.
 
-CODERABBIT REVIEW OUTPUT:
+${tier_label} REVIEW OUTPUT:
 \`\`\`
 ${review_output}
 \`\`\`
@@ -792,16 +801,97 @@ Instructions:
    - YES (real issue): fix it.
    - NO (false positive, already handled, or trivial style nit): skip it — do not change code for non-issues.
    Skip findings that only affect docs, spec files, or formatting unless they cause runtime problems.
-   If findings include severity labels, prioritize CRITICAL and HIGH; fix MEDIUM only if straightforward (< 5 lines).
+   If findings include severity labels, prioritize CRITICAL/P0 and HIGH/P1; fix MEDIUM/P2 only if straightforward (< 5 lines).
    Focus your effort on the issues that matter most.
 4. After fixing, verify:
-$(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
-$(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
+$(if [[ -n "\$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_TEST_CMD}"; fi)
+$(if [[ -n "\$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_LINT_CMD}"; fi)
 5. Commit all fixes:
    git add <specific files>
-   git commit -m "fix(${epic_num}): resolve CodeRabbit review findings"
+   git commit -m "fix(${epic_num}): resolve ${tier_label} review findings"
 6. Verify clean working tree: git status
 EOF
+}
+
+# Backward-compat alias (kept through v0.10.0)
+prompt_coderabbit_fix() {
+    prompt_review_fix "cli" "$1" "$2" "$3" "$4" "$5"
+}
+
+# ─── Phase: Self-Review (adversarial review prompts) ────────────────────────
+
+prompt_self_review() {
+    local epic_num="$1" title="$2" repo_root="$3" merge_target="$4"
+
+    cat <<PROMPT
+You are an adversarial code reviewer. Your job is to find bugs, security issues,
+and correctness problems in the code changes for epic ${epic_num}: ${title}.
+
+Review all files changed between origin/${merge_target} and HEAD.
+Use \`git diff --name-only origin/${merge_target}..HEAD\` to list changed files,
+then Read each file and review thoroughly.
+
+Exclude from review: *.lock, node_modules/*, dist/*, *.gen.*, *.sql.go
+
+For each issue found, report:
+- **File**: path
+- **Line**: number
+- **Severity**: CRITICAL / HIGH / MEDIUM / LOW
+- **Description**: what's wrong and why
+
+Focus areas (OWASP + correctness):
+1. SQL injection, XSS, command injection
+2. Authentication/authorization bypasses
+3. Input validation gaps
+4. Error handling (swallowed errors, missing nil checks)
+5. Race conditions, deadlocks
+6. Resource leaks (unclosed connections, file handles)
+7. Off-by-one errors, boundary conditions
+8. Missing test coverage for critical paths
+9. Broken imports or dead code from incomplete refactors
+
+If no issues found, say exactly: "No issues found."
+
+Do NOT suggest style improvements, naming changes, or refactors.
+Only report actual bugs, security issues, and correctness problems.
+PROMPT
+}
+
+prompt_self_review_chunk() {
+    local epic_num="$1" title="$2" repo_root="$3" merge_target="$4" dir="$5"
+
+    cat <<PROMPT
+You are an adversarial code reviewer. Your job is to find bugs, security issues,
+and correctness problems in the code changes for epic ${epic_num}: ${title}.
+
+Review ONLY files changed in the \`${dir}\` directory between origin/${merge_target} and HEAD.
+Use \`git diff --name-only origin/${merge_target}..HEAD -- ${dir}\` to list changed files,
+then Read each file and review thoroughly.
+
+Exclude from review: *.lock, node_modules/*, dist/*, *.gen.*, *.sql.go
+
+For each issue found, report:
+- **File**: path
+- **Line**: number
+- **Severity**: CRITICAL / HIGH / MEDIUM / LOW
+- **Description**: what's wrong and why
+
+Focus areas (OWASP + correctness):
+1. SQL injection, XSS, command injection
+2. Authentication/authorization bypasses
+3. Input validation gaps
+4. Error handling (swallowed errors, missing nil checks)
+5. Race conditions, deadlocks
+6. Resource leaks (unclosed connections, file handles)
+7. Off-by-one errors, boundary conditions
+8. Missing test coverage for critical paths
+9. Broken imports or dead code from incomplete refactors
+
+If no issues found, say exactly: "No issues found."
+
+Do NOT suggest style improvements, naming changes, or refactors.
+Only report actual bugs, security issues, and correctness problems.
+PROMPT
 }
 
 # ─── Phase: Conflict Resolution (rebase conflicts) ──────────────────────────

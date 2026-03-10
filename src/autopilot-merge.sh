@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# autopilot-coderabbit.sh — CodeRabbit integration + remote merge pipeline
+# autopilot-merge.sh — Remote merge pipeline (rebase, PR, merge, cleanup)
 #
-# Handles: CLI review, PR creation, PR review polling, conflict resolution,
+# Handles: PR creation, PR review polling, conflict resolution,
 # remote merge via gh, and local merge fallback.
 #
 # Sourced by autopilot.sh. Requires: autopilot-lib.sh (log, mark_epic_merged,
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR_CR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 # Globals set during remote merge, read by write_epic_summary()
 LAST_PR_NUMBER=""
@@ -77,17 +77,11 @@ do_remote_merge() {
     _emit_event "$events_log" "remote_merge_start" \
         "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
 
-
-    # Ensure CodeRabbit config exists with sensible defaults
-    ensure_coderabbit_config "$repo_root"
-
-    # Step 1: CodeRabbit CLI review (optional)
-    if [[ "${HAS_CODERABBIT:-false}" == "true" ]] && [[ "${SKIP_CODERABBIT:-false}" != "true" ]]; then
-        local _cli_rc=0
-        _coderabbit_cli_review "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file" "$events_log" || _cli_rc=$?
-        if [[ $_cli_rc -ne 0 ]]; then
+    # Step 1: Code review (tiered — CLI, Codex, self-review)
+    if [[ "${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}" != "true" ]]; then
+        _tiered_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$events_log" || {
             return 1
-        fi
+        }
     fi
 
     # Step 2: Commit dirty tree before push
@@ -132,178 +126,6 @@ do_remote_merge() {
         "$(jq -nc --arg e "$epic_num" --argjson pr "$pr_num" '{epic:$e, pr:$pr}')"
 
     return 0
-}
-
-# ─── CodeRabbit CLI Review ──────────────────────────────────────────────────
-
-# Convergence loop: run CLI → parse → Claude fix → retry (max 3).
-# Returns 0 on clean/force-advance/skip, 1 on unresolved issues or stall (when force-advance disabled).
-_coderabbit_cli_review() {
-    local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5" events_log="$6"
-    local max_retries=${CODERABBIT_MAX_ROUNDS:-3} attempt=0
-    local -a _cli_issue_counts=()
-
-    log PHASE "CodeRabbit CLI review"
-
-    # Pre-flight: verify CodeRabbit auth
-    if ! coderabbit auth status >/dev/null 2>&1; then
-        log WARN "CodeRabbit CLI not authenticated — skipping review"
-        LAST_CR_STATUS="skipped (not authenticated)"
-        return 0
-    fi
-
-    while [[ $attempt -lt $max_retries ]]; do
-        attempt=$((attempt + 1))
-        log INFO "CodeRabbit CLI review (round $attempt/$max_retries)"
-
-        local tmpfile rc=0 _cr_retry=0 _cr_max_retries=3
-        local -a _backoff_secs=(10 30 60)
-        while [[ $_cr_retry -lt $_cr_max_retries ]]; do
-            tmpfile=$(mktemp)
-            rc=0
-            (cd "$repo_root" && coderabbit review --prompt-only --base "$MERGE_TARGET" < /dev/null) \
-                > "$tmpfile" 2>&1 || rc=$?
-
-            if [[ $rc -eq 0 ]]; then
-                break
-            fi
-
-            _cr_retry=$((_cr_retry + 1))
-            if [[ $_cr_retry -lt $_cr_max_retries ]]; then
-                local _cr_output
-                _cr_output=$(<"$tmpfile"); rm -f "$tmpfile"
-
-                local _err_type
-                _err_type=$(_classify_cr_error "$_cr_output")
-
-                case "$_err_type" in
-                    rate_limit)
-                        log WARN "CodeRabbit rate limited — skipping CLI review"
-                        LAST_CR_STATUS="skipped (rate limited)"
-                        return 0
-                        ;;
-                    auth_error)
-                        log WARN "CodeRabbit auth error — skipping CLI review (run: coderabbit auth login)"
-                        LAST_CR_STATUS="skipped (auth error — run: coderabbit auth login)"
-                        return 0
-                        ;;
-                    service_error)
-                        local _wait=${_backoff_secs[$_cr_retry - 1]:-60}
-                        log WARN "CodeRabbit service error (exit $rc) — retrying in ${_wait}s (attempt $_cr_retry/$_cr_max_retries)"
-                        sleep "$_wait"
-                        ;;
-                    *)
-                        log WARN "CodeRabbit CLI error (exit $rc) — retrying in 10s (attempt $_cr_retry/$_cr_max_retries)"
-                        sleep 10
-                        ;;
-                esac
-            fi
-        done
-
-        # Final error handling after retries exhausted
-        if [[ $rc -ne 0 ]]; then
-            local output
-            output=$(<"$tmpfile"); rm -f "$tmpfile"
-
-            # Persist error to diagnostic log
-            local error_log="$repo_root/.specify/logs/${epic_num}-coderabbit-errors.log"
-            mkdir -p "$repo_root/.specify/logs"
-            {
-                echo "--- $(date -u '+%Y-%m-%dT%H:%M:%SZ') | round $attempt | exit $rc | retries $_cr_retry ---"
-                echo "$output" | head -20
-                echo ""
-            } >> "$error_log"
-
-            # Emit structured event with error classification
-            local _err_snippet _err_type
-            _err_snippet=$(echo "$output" | head -5 | tr '\n' ' ' | cut -c1-300)
-            _err_type=$(_classify_cr_error "$output")
-            _emit_event "$events_log" "coderabbit_cli_error" \
-                "$(jq -nc --arg e "$epic_num" --argjson rc "$rc" --arg err "$_err_snippet" \
-                    --argjson retry "$_cr_retry" --arg etype "$_err_type" \
-                    '{epic:$e, exit_code:$rc, error_snippet:$err, retry_count:$retry, error_type:$etype}')"
-
-            case "$_err_type" in
-                rate_limit)   LAST_CR_STATUS="skipped (rate limited)" ;;
-                service_error) LAST_CR_STATUS="skipped (service error after $_cr_retry retries)" ;;
-                auth_error)   LAST_CR_STATUS="skipped (auth error — run: coderabbit auth login)" ;;
-                *)            LAST_CR_STATUS="skipped (CLI error: exit $rc)" ;;
-            esac
-            log WARN "CodeRabbit CLI: $LAST_CR_STATUS"
-            return 0
-        fi
-
-        local review_output
-        review_output=$(<"$tmpfile")
-
-        # Persist findings to a durable log file before cleaning up the temp file
-        local findings_log_dir="$repo_root/.specify/logs"
-        local findings_log="$findings_log_dir/${epic_num}-coderabbit-findings.md"
-        mkdir -p "$findings_log_dir"
-        {
-            echo ""
-            echo "## Round $attempt / $max_retries"
-            echo "_Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')_"
-            echo ""
-            echo "$review_output"
-        } >> "$findings_log"
-
-        rm -f "$tmpfile"
-
-        # Check if review is clean
-        if _cr_cli_is_clean "$review_output"; then
-            log OK "CodeRabbit CLI review: clean"
-            _emit_event "$events_log" "coderabbit_cli_clean" \
-                "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
-            LAST_CR_STATUS="clean"
-            return 0
-        fi
-
-        log WARN "CodeRabbit CLI found issues (round $attempt/$max_retries)"
-        local _cli_issue_count
-        _cli_issue_count=$(_count_cli_issues "$review_output")
-        _cli_issue_count="${_cli_issue_count:-0}"
-        [[ "$_cli_issue_count" =~ ^[0-9]+$ ]] || _cli_issue_count=0
-        _cli_issue_counts+=("$_cli_issue_count")
-        if _check_stall "${_cli_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
-            log WARN "CodeRabbit CLI stalled — same issue count for ${CONVERGENCE_STALL_ROUNDS:-2} rounds"
-            _emit_event "$events_log" "coderabbit_cli_stalled" \
-                "$(jq -nc --arg e "$epic_num" --argjson ic "$_cli_issue_count" '{epic:$e, issue_count:$ic}')"
-            if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]]; then
-                log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (stall detected)"
-                LAST_CR_STATUS="force-advanced (stall after $attempt rounds)"
-                return 0
-            fi
-            LAST_CR_STATUS="halted (stall after $attempt rounds, $_cli_issue_count issues unresolved)"
-            return 1
-        fi
-
-        # Early exit when force-advance is enabled and we've completed enough rounds
-        if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge 2 ]]; then
-            log WARN "FORCE_ADVANCE_ON_REVIEW_STALL set — force-advancing after $attempt rounds (diminishing returns)"
-            LAST_CR_STATUS="force-advanced (diminishing returns after $attempt rounds)"
-            return 0
-        fi
-        _emit_event "$events_log" "coderabbit_cli_issues" \
-            "$(jq -nc --arg e "$epic_num" --argjson a "$attempt" --argjson ic "$_cli_issue_count" '{epic:$e, attempt:$a, issue_count:$ic}')"
-
-        # Claude fix
-        local fix_prompt
-        fix_prompt="$(prompt_coderabbit_fix "$epic_num" "$title" "$repo_root" "$short_name" "$review_output")"
-        invoke_claude "coderabbit-fix" "$fix_prompt" "$epic_num" "$title" || {
-            log WARN "Claude fix invocation failed"
-        }
-    done
-
-    if [[ "${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}" == "true" ]]; then
-        log WARN "CodeRabbit CLI: issues remain after $max_retries rounds — force-advancing"
-        LAST_CR_STATUS="force-advanced (issues remain after $max_retries rounds)"
-        return 0
-    fi
-    log ERROR "CodeRabbit CLI: issues remain after $max_retries rounds — halting"
-    log ERROR "Set FORCE_ADVANCE_ON_REVIEW_ERROR=true in .specify/project.env to skip"
-    LAST_CR_STATUS="halted (issues remain after $max_retries rounds)"
-    return 1
 }
 
 # ─── Rebase & Push ──────────────────────────────────────────────────────────
@@ -397,7 +219,7 @@ _rebase_and_push() {
             log WARN "Tests fail after rebase — invoking fix"
             local fix_prompt
             fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "")"
-            invoke_claude "coderabbit-fix" "$fix_prompt" "$epic_num" "$title" || true
+            invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
             if ! verify_tests "$repo_root"; then
                 log ERROR "Tests still failing after rebase — stopping"
                 return 1
@@ -594,7 +416,3 @@ _post_merge_cleanup() {
 
     return 0
 }
-
-# ─── Internal Helpers ───────────────────────────────────────────────────────
-
-source "${SCRIPT_DIR}/autopilot-coderabbit-helpers.sh"

@@ -1,0 +1,53 @@
+{
+  "name": "code_review",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "overall_correctness": {
+        "type": "boolean",
+        "description": "True if no issues found"
+      },
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "priority": {
+              "type": "integer",
+              "description": "0=critical, 1=high, 2=medium, 3=low"
+            },
+            "confidence": {
+              "type": "number",
+              "description": "0-1 confidence score"
+            },
+            "file": {
+              "type": "string",
+              "description": "File path"
+            },
+            "line": {
+              "type": "integer",
+              "description": "Line number"
+            },
+            "description": {
+              "type": "string",
+              "description": "What is wrong and why"
+            },
+            "suggestion": {
+              "type": "string",
+              "description": "How to fix it"
+            }
+          },
+          "required": ["priority", "confidence", "file", "line", "description", "suggestion"],
+          "additionalProperties": false
+        }
+      },
+      "summary": {
+        "type": "string",
+        "description": "Brief overall assessment"
+      }
+    },
+    "required": ["overall_correctness", "findings", "summary"],
+    "additionalProperties": false
+  }
+}

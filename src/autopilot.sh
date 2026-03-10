@@ -14,8 +14,8 @@
 #   ./autopilot.sh --silent     # Suppress live dashboard output
 #   ./autopilot.sh --no-auto-continue   # Pause between epics
 
-if (( BASH_VERSINFO[0] < 4 )); then
-  echo "ERROR: bash 4+ required (found $BASH_VERSION). Install via: brew install bash" >&2
+if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+  echo "ERROR: bash 4.3+ required (found $BASH_VERSION). Install via: brew install bash" >&2
   exit 1
 fi
 
@@ -26,7 +26,9 @@ source "$SCRIPT_DIR/autopilot-lib.sh"
 source "$SCRIPT_DIR/autopilot-stream.sh"
 source "$SCRIPT_DIR/autopilot-prompts.sh"
 source "$SCRIPT_DIR/autopilot-github.sh"
-source "$SCRIPT_DIR/autopilot-coderabbit.sh"
+source "$SCRIPT_DIR/autopilot-review-helpers.sh"
+source "$SCRIPT_DIR/autopilot-review.sh"
+source "$SCRIPT_DIR/autopilot-merge.sh"
 source "$SCRIPT_DIR/autopilot-verify.sh"
 source "$SCRIPT_DIR/autopilot-finalize.sh"
 source "$SCRIPT_DIR/autopilot-validate.sh"
@@ -56,6 +58,9 @@ declare -A PHASE_MODEL=(
     [conflict-resolve]="$OPUS"
     [security-review]="$OPUS"
     [security-fix]="$OPUS"
+    [self-review]="$OPUS"
+    [review-fix]="$OPUS"
+    [rebase-fix]="$OPUS"
 )
 
 # Phase → allowed tools
@@ -77,6 +82,9 @@ declare -A PHASE_TOOLS=(
     [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
     [security-review]="Read,Write,Glob,Grep"
     [security-fix]="Read,Write,Edit,Bash,Glob,Grep"
+    [self-review]="Read,Glob,Grep,Bash"
+    [review-fix]="Read,Write,Edit,Bash,Glob,Grep"
+    [rebase-fix]="Read,Write,Edit,Bash,Glob,Grep"
 )
 
 # Phase → max retries (convergence phases get more attempts)
@@ -98,6 +106,9 @@ declare -A PHASE_MAX_RETRIES=(
     [conflict-resolve]=3
     [security-review]=1
     [security-fix]=1
+    [self-review]=1
+    [review-fix]=3
+    [rebase-fix]=3
 )
 
 # ─── Argument Parsing ────────────────────────────────────────────────────────
@@ -112,6 +123,7 @@ GITHUB_RESYNC=false
 STRICT_DEPS=false
 ALLOW_DEFERRED=false
 SKIP_CODERABBIT=false
+SKIP_REVIEW=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -136,7 +148,7 @@ parse_args() {
                 ;;
             --strict-deps)      STRICT_DEPS=true ;;
             --allow-deferred)   ALLOW_DEFERRED=true ;;
-            --skip-coderabbit)  SKIP_CODERABBIT=true ;;
+            --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -151,7 +163,7 @@ parse_args() {
                 echo "  --github-resync      Resync all epics to GitHub Projects and exit"
                 echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
-                echo "  --skip-coderabbit    Skip CodeRabbit CLI review during remote merge"
+                echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
@@ -186,6 +198,13 @@ invoke_claude() {
     local prompt="$2"
     local epic_num="$3"
     local title="${4:-}"
+
+    # Validate phase exists in required arrays (missing key + set -u = crash)
+    if [[ ! -v PHASE_MODEL["$phase"] ]] || [[ ! -v PHASE_TOOLS["$phase"] ]]; then
+        log ERROR "Unknown phase '$phase' — missing from PHASE_MODEL or PHASE_TOOLS"
+        return 1
+    fi
+
     local model="${PHASE_MODEL[$phase]}"
     local tools="${PHASE_TOOLS[$phase]}"
 
@@ -545,7 +564,7 @@ _correct_prefix() {
     if [[ -d "$repo_root/specs/$branch_name" ]]; then
         if [[ -d "$repo_root/specs/$correct_name" ]]; then
             log WARN "Target dir specs/$correct_name already exists — removing stale copy"
-            rm -rf "$repo_root/specs/$correct_name"
+            rm -rf "${repo_root:?}/specs/${correct_name:?}"
         fi
         mv "$repo_root/specs/$branch_name" "$repo_root/specs/$correct_name"
         log INFO "Renamed specs dir: $branch_name → $correct_name"

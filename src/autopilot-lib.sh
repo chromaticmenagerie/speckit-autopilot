@@ -456,8 +456,8 @@ write_epic_summary() {
                 _phase_rounds[$phase]=0
             fi
 
-            _phase_cost[$phase]=$(echo "${_phase_cost[$phase]} + $cost" | bc)
-            _phase_dur[$phase]=$(echo "${_phase_dur[$phase]} + $dur" | bc)
+            _phase_cost[$phase]=$(awk -v a="${_phase_cost[$phase]}" -v b="$cost" 'BEGIN {printf "%.6f", a + b}')
+            _phase_dur[$phase]=$(awk -v a="${_phase_dur[$phase]}" -v b="$dur" 'BEGIN {printf "%.6f", a + b}')
             _phase_rounds[$phase]=$(( ${_phase_rounds[$phase]} + 1 ))
         done < <(jq -c "select(.event==\"phase_end\" and .epic==\"$epic_num\")" "$events_log" 2>/dev/null)
 
@@ -482,7 +482,7 @@ write_epic_summary() {
 **Files changed**: $files_changed
 **Total cost**: \$$epic_total_cost
 $(if [[ -n "${LAST_PR_NUMBER:-}" ]]; then echo "**PR**: #$LAST_PR_NUMBER"; fi)
-$(if [[ -n "${LAST_CR_STATUS:-}" ]]; then echo "**CodeRabbit**: $LAST_CR_STATUS"; fi)
+$(if [[ -n "${LAST_CR_STATUS:-}" ]]; then echo "**Code Review**: $LAST_CR_STATUS"; fi)
 
 ## Tests
 
@@ -545,6 +545,15 @@ load_project_config() {
         exit 1
     fi
 
+    # Validate config contains only comments, blank lines, and assignments
+    local _bad_lines
+    _bad_lines=$(grep -vnE '^\s*(#|$|(export\s+)?[A-Za-z_][A-Za-z0-9_]*=)' "$config_file") || true
+    if [[ -n "$_bad_lines" ]]; then
+        log ERROR "project.env contains invalid lines — refusing to source:"
+        log ERROR "$_bad_lines"
+        exit 1
+    fi
+
     set -a; source "$config_file"; set +a
     log INFO "Loaded project config from $config_file"
 
@@ -554,6 +563,17 @@ load_project_config() {
     fi
     if [[ -z "$FORCE_ADVANCE_ON_REVIEW_ERROR" ]]; then
         FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}"
+    fi
+
+    # Review tier config (backward compat)
+    SKIP_REVIEW="${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}"
+    REVIEW_TIER_ORDER="${REVIEW_TIER_ORDER:-}"
+    if [[ -z "$REVIEW_TIER_ORDER" ]]; then
+        local tiers=""
+        [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
+        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        tiers="${tiers:+$tiers,}self"
+        REVIEW_TIER_ORDER="$tiers"
     fi
 
     if [[ -z "$PROJECT_TEST_CMD" ]]; then
@@ -721,4 +741,78 @@ $lint_summary
 SUMMARY
 
     log OK "Project summary written: $summary_file"
+}
+
+# ─── Process Group Isolation ─────────────────────────────────────────────────
+
+# _exec_in_new_pgrp COMMAND [ARGS...]
+# Replaces current process with COMMAND in a new process group.
+# The exec prefix is MANDATORY (Decision #32): without it, bash forks a
+# subshell (PID S) then perl/python3 (PID X). $! captures S but setpgrp
+# makes X the PGID leader. kill -- -S targets parent's PGID — catastrophic.
+# With exec, the subshell IS perl/python3: $! = PGID leader.
+#
+# Perl primary (4ms startup, ships on all macOS through Tahoe 26).
+# Python3 fallback (51ms startup, guaranteed via Xcode CLT / Homebrew prereq).
+_exec_in_new_pgrp() {
+    if command -v perl >/dev/null 2>&1; then
+        exec perl -e 'setpgrp(0,0); exec @ARGV' "$@"
+    elif command -v python3 >/dev/null 2>&1; then
+        exec python3 -c 'import os,sys; os.setpgrp(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+    else
+        log ERROR "perl or python3 required for process group isolation"
+        return 1
+    fi
+}
+
+# run_with_timeout SECONDS COMMAND [ARGS...]
+# Returns: command exit code, or 124 on timeout
+# Requires: bash 4.3+ (wait -n)
+#
+# IMPORTANT: The command MUST be wrapped with process group isolation
+# (e.g., _exec_in_new_pgrp ...) so that kill -- -$pid
+# only affects the command's process group, not the parent script.
+# Without isolation, kill -- -$pid targets the parent's PGID (catastrophic).
+#
+# On timeout: SIGTERM → 2s grace → SIGKILL (Decision #28).
+# SIGTERM alone can hang forever if the process ignores it (Codex CLI
+# issues #7187, #13715, #14048). SIGKILL is uncatchable.
+#
+# Recovery: wait -n can return 127 if SIGCHLD reaps child before wait -n
+# collects it (Decision #30). Explicit wait $PID retrieves cached status.
+run_with_timeout() {
+    local timeout_secs="$1"
+    shift
+
+    "$@" & local cmd_pid=$!
+    sleep "$timeout_secs" & local watchdog_pid=$!
+
+    # Wait for whichever finishes first
+    wait -n "$cmd_pid" "$watchdog_pid" 2>/dev/null
+    local first_status=$?
+
+    # Recovery: wait -n exit 127 race (Decision #30)
+    # SIGCHLD may reap child before wait -n collects it → spurious 127.
+    # Explicit wait $PID retrieves cached status (POSIX guaranteed).
+    # && ... || ... pattern prevents set -e abort on non-zero exit.
+    if [[ $first_status -eq 127 ]] && ! kill -0 "$cmd_pid" 2>/dev/null; then
+        wait "$cmd_pid" 2>/dev/null && first_status=$? || first_status=$?
+    fi
+
+    # Determine which finished
+    if kill -0 "$cmd_pid" 2>/dev/null; then
+        # Command still running → watchdog fired first → timeout
+        kill -- -"$cmd_pid" 2>/dev/null        # SIGTERM to process group
+        sleep 2                                 # Grace period for clean shutdown
+        if kill -0 "$cmd_pid" 2>/dev/null; then
+            kill -9 -- -"$cmd_pid" 2>/dev/null  # SIGKILL (uncatchable)
+        fi
+        wait "$cmd_pid" 2>/dev/null
+        return 124
+    else
+        # Command finished → kill watchdog
+        kill "$watchdog_pid" 2>/dev/null
+        wait "$watchdog_pid" 2>/dev/null
+        return $first_status
+    fi
 }
