@@ -308,7 +308,7 @@ _tier_codex() {
     fi
 
     # Initialize before trap (prevents set -u crash in trap handler if mktemp fails)
-    local tmpfile="" stderr_file="" prompt_file=""
+    local tmpfile="" stderr_file="" prompt_file="" diff_file=""
     local timeout_secs="${CODEX_REVIEW_TIMEOUT:-300}"
 
     # ── CLEANUP: guard-variable pattern (Decision #31) ──
@@ -321,18 +321,19 @@ _tier_codex() {
     _codex_cleanup() {
         [[ $_codex_cleaned -eq 1 ]] && return
         _codex_cleaned=1
-        rm -f "$tmpfile" "$stderr_file" "$prompt_file"
+        rm -f "$tmpfile" "$stderr_file" "$prompt_file" "$diff_file"
     }
+    trap '_codex_cleanup' ERR RETURN
     tmpfile=$(mktemp)
     stderr_file=$(mktemp)
     prompt_file=$(mktemp)
-    trap '_codex_cleanup' ERR RETURN
+    diff_file=$(mktemp)
 
     # ── DIFF SIZE GUARD ──
+    git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" > "$diff_file"
     local diff_bytes
-    diff_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
-        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
-        | wc -c | xargs)
+    diff_bytes=$(wc -c < "$diff_file" | xargs)
 
     if [[ $diff_bytes -gt ${CODEX_MAX_DIFF_BYTES:-800000} ]]; then
         log WARN "Diff too large for Codex review (${diff_bytes} bytes, limit ${CODEX_MAX_DIFF_BYTES:-800000}) — falling through to next tier"
@@ -349,10 +350,8 @@ confidence score (0-1), code location, description, and suggestion.
 
 If no issues found, set overall_correctness to true with an empty findings array.
 REVIEW_PROMPT
-    # Append the actual diff
-    git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
-        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
-        >> "$prompt_file"
+    # Append the cached diff
+    cat "$diff_file" >> "$prompt_file"
 
     log INFO "Running codex review (timeout: ${timeout_secs}s, diff: ${diff_bytes} bytes)"
 
