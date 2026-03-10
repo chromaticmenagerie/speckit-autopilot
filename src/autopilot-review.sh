@@ -450,6 +450,7 @@ _tier_claude_self_review_chunked() {
 
     local all_findings=""
     local chunk_num=0
+    local success_count=0 fail_count=0
 
     while IFS= read -r dir; do
         [[ -z "$dir" ]] && continue
@@ -485,8 +486,10 @@ _tier_claude_self_review_chunked() {
                 sub_tmpfile=$(mktemp)
                 if invoke_claude "self-review" "$sub_prompt" "$epic_num" "$title" > "$sub_tmpfile" 2>&1; then
                     all_findings+="## $subdir\n\n$(cat "$sub_tmpfile")\n\n"
+                    success_count=$((success_count + 1))
                 else
                     all_findings+="## $subdir\n\nREVIEW FAILED\n\n"
+                    fail_count=$((fail_count + 1))
                 fi
                 rm -f "$sub_tmpfile"
             done <<< "$subdirs"
@@ -501,14 +504,30 @@ _tier_claude_self_review_chunked() {
         tmpfile=$(mktemp)
         if invoke_claude "self-review" "$prompt" "$epic_num" "$title" > "$tmpfile" 2>&1; then
             all_findings+="## $dir\n\n$(cat "$tmpfile")\n\n"
+            success_count=$((success_count + 1))
         else
             all_findings+="## $dir\n\nREVIEW FAILED\n\n"
+            fail_count=$((fail_count + 1))
         fi
         rm -f "$tmpfile"
     done <<< "$dirs"
 
-    TIER_OUTPUT="$all_findings"
+    # All chunks failed → tier error (fall through to next tier)
+    if [[ $success_count -eq 0 ]]; then
+        log WARN "All $fail_count review chunks failed — tier error"
+        TIER_OUTPUT=""
+        return 2
+    fi
 
+    # Partial failure → treat as issues (fix loop will re-review)
+    if [[ $fail_count -gt 0 ]]; then
+        log WARN "$fail_count/$((success_count + fail_count)) review chunks failed"
+        TIER_OUTPUT="$all_findings"
+        return 1
+    fi
+
+    # All succeeded → existing cleanness check
+    TIER_OUTPUT="$all_findings"
     if _review_is_clean "self" "$TIER_OUTPUT"; then
         return 0
     fi
