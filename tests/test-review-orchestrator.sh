@@ -169,7 +169,7 @@ CONVERGENCE_STALL_ROUNDS=99
 DIMINISHING_RETURNS_THRESHOLD=99
 
 rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" || rc=$?
-assert_eq "1" "$rc" "tier-error-mid-loop: returns 1"
+assert_eq "2" "$rc" "tier-error-mid-loop: returns 2 (signals caller to try next tier)"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 

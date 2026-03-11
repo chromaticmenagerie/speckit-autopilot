@@ -152,7 +152,7 @@ _tiered_review() {
                 tier_succeeded=true
                 break
                 ;;
-            1)  # Issues found — enter fix loop
+            1)  # Issues found — enter fix loop; fall through to next tier if unresolved
                 LAST_CR_STATUS="issues (tier: $tier)"
                 _emit_event "$events_log" "review_tier_end" "{\"tier\":\"$tier\",\"result\":\"issues\"}"
                 # Per-tier max rounds (Decision #17)
@@ -163,9 +163,14 @@ _tiered_review() {
                     self)   max_rounds="${CLAUDE_SELF_REVIEW_MAX_ROUNDS:-2}" ;;
                     *)      max_rounds=3 ;;
                 esac
-                _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log"
-                tier_succeeded=true
-                break
+                local loop_rc=0
+                _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log" || loop_rc=$?
+                if [[ $loop_rc -eq 0 ]]; then
+                    tier_succeeded=true
+                    break
+                fi
+                # loop_rc=1 (unresolved issues) or loop_rc=2 (tier error) — fall through
+                log WARN "Tier '$tier' fix loop exited with rc=$loop_rc — falling through to next tier"
                 ;;
             2)  # Tier error — fall through to next
                 log WARN "Tier $tier failed — falling through to next tier"
@@ -228,11 +233,12 @@ _review_fix_loop() {
                     "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"clean\"}"
                 return 0
                 ;;
-            2)  # Tier error during re-review
-                log WARN "$tier re-review failed (round $attempt) — tier error in fix loop"
+            2)  # Tier broke during re-review — signal caller to try next tier
+                log WARN "Tier '$tier' errored during fix re-review — signaling fallthrough"
+                LAST_CR_STATUS="tier error during fix (tier: $tier, round $attempt)"
                 _emit_event "$events_log" "review_convergence_complete" \
                     "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"tier_error\"}"
-                return 1
+                return 2
                 ;;
             1)  # Issues still found — continue convergence
                 ;;
@@ -262,7 +268,7 @@ _review_fix_loop() {
         fi
 
         # Early exit: diminishing returns after 2+ rounds
-        if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]] && [[ $attempt -ge ${DIMINISHING_RETURNS_THRESHOLD:-2} ]]; then
+        if [[ "${FORCE_ADVANCE_ON_DIMINISHING_RETURNS:-false}" == "true" ]] && [[ $attempt -ge ${DIMINISHING_RETURNS_THRESHOLD:-3} ]]; then
             LAST_CR_STATUS="force-advanced (diminishing returns, tier: $tier, round $attempt)"
             log WARN "Force-advancing after $attempt rounds (diminishing returns)"
             _emit_event "$events_log" "review_convergence_complete" \
