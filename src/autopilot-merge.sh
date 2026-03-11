@@ -221,12 +221,19 @@ _rebase_and_push() {
     if [[ -n "${PROJECT_TEST_CMD:-}" ]]; then
         if ! verify_tests "$repo_root"; then
             log WARN "Tests fail after rebase — invoking fix (attempt 1/2)"
+            local _merge_test_file=""
+            _merge_test_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            printf '%s' "$LAST_TEST_OUTPUT" > "$_merge_test_file"
             local fix_prompt
-            fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "")"
+            fix_prompt="$(prompt_finalize_fix "$repo_root" "$_merge_test_file" "")"
+            rm -f "$_merge_test_file"
             invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
             if ! verify_tests "$repo_root"; then
                 log WARN "Tests still failing — invoking fix (attempt 2/2)"
-                fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "")"
+                _merge_test_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+                printf '%s' "$LAST_TEST_OUTPUT" > "$_merge_test_file"
+                fix_prompt="$(prompt_finalize_fix "$repo_root" "$_merge_test_file" "")"
+                rm -f "$_merge_test_file"
                 invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
                 if ! verify_tests "$repo_root"; then
                     log ERROR "Tests still failing after 2 fix attempts — stopping"
@@ -240,8 +247,12 @@ _rebase_and_push() {
     if [[ -n "${PROJECT_BUILD_CMD:-}" ]]; then
         if ! verify_build "$repo_root"; then
             log WARN "Build failed after rebase — invoking fix"
+            local _merge_build_file=""
+            _merge_build_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            printf '%s' "$LAST_BUILD_OUTPUT" > "$_merge_build_file"
             local fix_prompt
-            fix_prompt="$(prompt_finalize_fix "$repo_root" "" "$LAST_BUILD_OUTPUT")"
+            fix_prompt="$(prompt_finalize_fix "$repo_root" "" "$_merge_build_file")"
+            rm -f "$_merge_build_file"
             invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
             if ! verify_build "$repo_root"; then
                 log ERROR "Build still failing after fix attempt — stopping"

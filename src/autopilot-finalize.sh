@@ -65,8 +65,18 @@ run_finalize() {
         # Invoke Claude Opus to fix failures
         log PHASE "Invoking Opus to fix test/lint failures (round $round)"
 
+        local test_file="" lint_file=""
+        if [[ -n "$LAST_TEST_OUTPUT" ]]; then
+            test_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            printf '%s' "$LAST_TEST_OUTPUT" > "$test_file"
+        fi
+        if [[ -n "$LAST_LINT_OUTPUT" ]]; then
+            lint_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            printf '%s' "$LAST_LINT_OUTPUT" > "$lint_file"
+        fi
         local fix_prompt
-        fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "$LAST_LINT_OUTPUT")"
+        fix_prompt="$(prompt_finalize_fix "$repo_root" "$test_file" "$lint_file")"
+        rm -f "$test_file" "$lint_file"
 
         if $DRY_RUN; then
             log INFO "[DRY RUN] Would invoke claude to fix test/lint failures"
@@ -102,8 +112,18 @@ run_finalize() {
         # Re-verify after review changes
         if ! verify_tests "$repo_root"; then
             log WARN "Tests broke during integration review — invoking fix"
+            local refix_test_file="" refix_lint_file=""
+            if [[ -n "$LAST_TEST_OUTPUT" ]]; then
+                refix_test_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+                printf '%s' "$LAST_TEST_OUTPUT" > "$refix_test_file"
+            fi
+            if [[ -n "$LAST_LINT_OUTPUT" ]]; then
+                refix_lint_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+                printf '%s' "$LAST_LINT_OUTPUT" > "$refix_lint_file"
+            fi
             local refix_prompt
-            refix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "$LAST_LINT_OUTPUT")"
+            refix_prompt="$(prompt_finalize_fix "$repo_root" "$refix_test_file" "$refix_lint_file")"
+            rm -f "$refix_test_file" "$refix_lint_file"
             invoke_claude "finalize-fix" "$refix_prompt" "FIN" "Post-review fix" || true
             if ! verify_tests "$repo_root"; then
                 log ERROR "Finalize: tests fail after integration review fix attempt"

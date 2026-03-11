@@ -547,15 +547,21 @@ EOF
 }
 
 prompt_security_fix() {
-    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" findings="$5"
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" findings_file="$5"
+
+    local findings_section=""
+    if [[ -n "$findings_file" ]]; then
+        findings_section="Read the security findings from: ${findings_file}"
+    else
+        findings_section="(no findings)"
+    fi
+
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
-The security review found issues that need fixing. Here are the findings:
+The security review found issues that need fixing.
 
-\`\`\`
-${findings}
-\`\`\`
+${findings_section}
 
 Instructions:
 1. Read each finding carefully — understand the file and line referenced.
@@ -653,9 +659,20 @@ EOF
 }
 
 prompt_verify_ci_fix() {
-    local epic_num="$1" title="$2" repo_root="$3" ci_output="$4" round="$5" max_rounds="$6" prior_warnings="${7:-}"
+    local epic_num="$1" title="$2" repo_root="$3" ci_file="$4" round="$5" max_rounds="$6" warnings_file="${7:-}"
     local git_diff
     git_diff=$(git -C "$repo_root" diff --stat 2>/dev/null || true)
+
+    local ci_section=""
+    if [[ -n "$ci_file" ]]; then
+        ci_section="Read the CI output from: ${ci_file}"
+    fi
+
+    local warnings_section=""
+    if [[ -n "$warnings_file" ]]; then
+        warnings_section="### Prior Round Warnings\nThe previous fix round was flagged for these issues — do NOT repeat them:\nRead the warnings from: ${warnings_file}"
+    fi
+
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
@@ -664,9 +681,7 @@ $(_preamble "$epic_num" "$title" "$repo_root")
 The full CI pipeline failed before merge. Fix these failures with MINIMAL, targeted changes.
 
 ### CI Output
-\`\`\`
-${ci_output}
-\`\`\`
+${ci_section}
 
 ### Working Tree Changes
 \`\`\`
@@ -674,16 +689,7 @@ ${git_diff}
 \`\`\`
 If generated files appear above, run the project's generate command and commit the result.
 
-$(if [[ -n "$prior_warnings" ]]; then
-cat <<WARN_EOF
-
-### Prior Round Warnings
-The previous fix round was flagged for these issues — do NOT repeat them:
-\`\`\`
-${prior_warnings}
-\`\`\`
-WARN_EOF
-fi)
+$(printf '%b' "${warnings_section}")
 
 ### Test File Rules
 
@@ -777,7 +783,16 @@ EOF
 # ─── Phase: Finalize Fix (fix test/lint failures on base branch) ──────────
 
 prompt_finalize_fix() {
-    local repo_root="$1" test_output="$2" lint_output="$3"
+    local repo_root="$1" test_file="$2" lint_file="$3"
+
+    local test_section="" lint_section=""
+    if [[ -n "$test_file" ]]; then
+        test_section="TEST FAILURES:\nRead the test output from: ${test_file}\n"
+    fi
+    if [[ -n "$lint_file" ]]; then
+        lint_section="LINT ISSUES:\nRead the lint output from: ${lint_file}\n"
+    fi
+
     cat <<EOF
 IMPORTANT: Read .specify/memory/constitution.md and .specify/memory/architecture.md FIRST.
 Internalize all principles, prohibitions, and current architecture. They are non-negotiable.
@@ -787,15 +802,7 @@ linter is failing. Your ONLY job is to fix these failures.
 
 Working directory: ${repo_root}
 
-TEST FAILURES:
-\`\`\`
-${test_output}
-\`\`\`
-
-LINT ISSUES:
-\`\`\`
-${lint_output}
-\`\`\`
+$(printf '%b' "${test_section}${lint_section}")
 
 Instructions:
 1. Read the failing test output carefully. Identify root causes.
@@ -859,7 +866,7 @@ EOF
 # ─── Phase: Review Fix (resolve code review findings — tier-aware) ────────────
 
 prompt_review_fix() {
-    local tier="$1" epic_num="$2" title="$3" repo_root="$4" short_name="$5" review_output="$6"
+    local tier="$1" epic_num="$2" title="$3" repo_root="$4" short_name="$5" review_file="$6"
 
     local tier_label
     case "$tier" in
@@ -869,16 +876,18 @@ prompt_review_fix() {
         *)      tier_label="Code review ($tier)" ;;
     esac
 
+    local review_section=""
+    if [[ -n "$review_file" ]]; then
+        review_section="${tier_label} REVIEW OUTPUT:\nRead the review output from: ${review_file}"
+    fi
+
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
 ${tier_label} has reviewed changes on branch ${short_name} and found potential issues.
 Verify each finding against the actual code before acting on it.
 
-${tier_label} REVIEW OUTPUT:
-\`\`\`
-${review_output}
-\`\`\`
+$(printf '%b' "${review_section}")
 
 Instructions:
 1. Read each finding carefully — understand the file and line referenced.
@@ -890,8 +899,8 @@ Instructions:
    If findings include severity labels, prioritize CRITICAL/P0 and HIGH/P1; fix MEDIUM/P2 only if straightforward (< 5 lines).
    Focus your effort on the issues that matter most.
 4. After fixing, verify:
-$(if [[ -n "\$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_TEST_CMD}"; fi)
-$(if [[ -n "\$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/\${PROJECT_WORK_DIR} && \${PROJECT_LINT_CMD}"; fi)
+$(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
+$(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
 5. Commit all fixes:
    git add <specific files>
    git commit -m "fix(${epic_num}): resolve ${tier_label} review findings"

@@ -537,8 +537,12 @@ SEOF
         latest_findings=$(awk '/^## Round '"$round"'/{found=1} found' "$findings_file")
 
         # 5. Dispatch security-fix phase
+        local findings_file
+        findings_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+        printf '%s' "$latest_findings" > "$findings_file"
         local fix_prompt
-        fix_prompt="$(prompt_security_fix "$epic_num" "$title" "$repo_root" "$short_name" "$latest_findings")"
+        fix_prompt="$(prompt_security_fix "$epic_num" "$title" "$repo_root" "$short_name" "$findings_file")"
+        rm -f "$findings_file"
         invoke_claude "security-fix" "$fix_prompt" "$epic_num" "$title" || {
             log WARN "Security fix invocation failed"
         }
@@ -623,8 +627,17 @@ _run_verify_ci_gate() {
         local head_before
         head_before=$(git -C "$repo_root" rev-parse HEAD)
 
+        local ci_file
+        ci_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+        printf '%s' "$LAST_CI_OUTPUT" > "$ci_file"
+        local warn_file=""
+        if [[ -n "$CI_FIX_WARNINGS" ]]; then
+            warn_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            printf '%s' "$CI_FIX_WARNINGS" > "$warn_file"
+        fi
         local fix_prompt
-        fix_prompt="$(prompt_verify_ci_fix "$epic_num" "$title" "$repo_root" "$LAST_CI_OUTPUT" "$round" "$max_rounds" "$CI_FIX_WARNINGS")"
+        fix_prompt="$(prompt_verify_ci_fix "$epic_num" "$title" "$repo_root" "$ci_file" "$round" "$max_rounds" "$warn_file")"
+        rm -f "$ci_file" "$warn_file"
 
         if $DRY_RUN; then
             log INFO "[DRY RUN] Would invoke Sonnet to fix CI failures"
@@ -1165,7 +1178,7 @@ main() {
     log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
-    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-prompt-* 2>/dev/null; if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]}"; elif [[ -n "$TARGET_EPIC" ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh $TARGET_EPIC"; else log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; fi; exit 130' INT TERM
+    trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-{prompt,content}-* 2>/dev/null; if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]}"; elif [[ -n "$TARGET_EPIC" ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh $TARGET_EPIC"; else log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; fi; exit 130' INT TERM
 
     while true; do
         # Find next epic

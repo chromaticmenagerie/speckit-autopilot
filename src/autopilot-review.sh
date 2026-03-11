@@ -277,8 +277,12 @@ _review_fix_loop() {
         fi
 
         # ─ CLAUDE FIX ─
+        local _review_file
+        _review_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+        printf '%s' "$TIER_OUTPUT" > "$_review_file"
         local fix_prompt
-        fix_prompt="$(prompt_review_fix "$tier" "$epic_num" "$title" "$repo_root" "$short_name" "$TIER_OUTPUT")"
+        fix_prompt="$(prompt_review_fix "$tier" "$epic_num" "$title" "$repo_root" "$short_name" "$_review_file")"
+        rm -f "$_review_file"
         invoke_claude "review-fix" "$fix_prompt" "$epic_num" "$title" || {
             log WARN "Review fix invocation failed (round $attempt)"
         }
