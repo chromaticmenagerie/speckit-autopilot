@@ -790,42 +790,52 @@ run_epic() {
         fi
 
         if [[ "$state" == "review" ]]; then
-            # Review first, then merge
-            local retries=0
-            while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
-                if run_phase "review" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "$((retries + 1))" "${PHASE_MAX_RETRIES[$state]:-3}"; then
+            local _tasks_md="$repo_root/specs/$short_name/tasks.md"
+            local _cr_status_file="$repo_root/specs/$short_name/.last-cr-status"
+
+            if [[ -f "$_tasks_md" ]] && grep -q '<!-- TIERED_REVIEW_COMPLETE -->' "$_tasks_md"; then
+                log INFO "Resuming: tiered review already complete — skipping to merge gate"
+                [[ -f "$_cr_status_file" ]] && LAST_CR_STATUS=$(<"$_cr_status_file")
+            else
+                # Review first, then merge
+                local retries=0
+                while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
+                    if run_phase "review" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "$((retries + 1))" "${PHASE_MAX_RETRIES[$state]:-3}"; then
+                        _accumulate_phase_cost "$repo_root"
+                        break
+                    fi
                     _accumulate_phase_cost "$repo_root"
-                    break
-                fi
-                _accumulate_phase_cost "$repo_root"
-                retries=$((retries + 1))
-                log WARN "Review attempt $retries/${PHASE_MAX_RETRIES[$state]:-3} failed, retrying..."
-            done
+                    retries=$((retries + 1))
+                    log WARN "Review attempt $retries/${PHASE_MAX_RETRIES[$state]:-3} failed, retrying..."
+                done
 
-            if [[ $retries -ge ${PHASE_MAX_RETRIES[$state]:-3} ]]; then
-                log ERROR "Review failed after ${PHASE_MAX_RETRIES[$state]:-3} attempts"
-                return 1
-            fi
-
-            log INFO "Review phase complete — transitioning to merge gate"
-            log INFO "Current branch: $(git -C "$repo_root" branch --show-current 2>/dev/null || echo 'unknown')"
-            log INFO "Working tree clean: $(git -C "$repo_root" status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted files"
-
-            # ── Tiered automated review (CodeRabbit / Codex / Claude self-review) ──
-            if [[ "${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}" != "true" ]]; then
-                local events_log="$repo_root/.specify/logs/events.jsonl"
-                _tiered_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$events_log" || {
-                    log ERROR "Tiered review failed — halting before merge"
+                if [[ $retries -ge ${PHASE_MAX_RETRIES[$state]:-3} ]]; then
+                    log ERROR "Review failed after ${PHASE_MAX_RETRIES[$state]:-3} attempts"
                     return 1
-                }
-                # Write resumability marker
-                local _tasks_md="$repo_root/specs/$short_name/tasks.md"
-                if [[ -f "$_tasks_md" ]] && ! grep -q '<!-- TIERED_REVIEW_COMPLETE -->' "$_tasks_md"; then
-                    echo "" >> "$_tasks_md"
-                    echo "<!-- TIERED_REVIEW_COMPLETE -->" >> "$_tasks_md"
-                    (cd "$repo_root" && git add "$_tasks_md" && \
-                     git commit -m "chore(${epic_num}): tiered review complete" 2>/dev/null || true)
                 fi
+
+                log INFO "Review phase complete — transitioning to merge gate"
+                log INFO "Current branch: $(git -C "$repo_root" branch --show-current 2>/dev/null || echo 'unknown')"
+                log INFO "Working tree clean: $(git -C "$repo_root" status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted files"
+
+                # ── Tiered automated review (CodeRabbit / Codex / Claude self-review) ──
+                if [[ "${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}" != "true" ]]; then
+                    local events_log="$repo_root/.specify/logs/events.jsonl"
+                    _tiered_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$events_log" || {
+                        log ERROR "Tiered review failed — halting before merge"
+                        return 1
+                    }
+                    # Write resumability marker
+                    if [[ -f "$_tasks_md" ]] && ! grep -q '<!-- TIERED_REVIEW_COMPLETE -->' "$_tasks_md"; then
+                        echo "" >> "$_tasks_md"
+                        echo "<!-- TIERED_REVIEW_COMPLETE -->" >> "$_tasks_md"
+                        (cd "$repo_root" && git add "$_tasks_md" && \
+                         git commit -m "chore(${epic_num}): tiered review complete" 2>/dev/null || true)
+                    fi
+                fi
+
+                # Persist LAST_CR_STATUS for resume
+                echo "$LAST_CR_STATUS" > "$_cr_status_file"
             fi
 
             # Merge gate
