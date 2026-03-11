@@ -310,7 +310,36 @@ run_phase() {
             fi
             ;;
         crystallize)
-            prompt="$(prompt_crystallize "$epic_num" "$title" "$repo_root" "$short_name")"
+            local diff_sha="${LAST_MERGE_SHA:-HEAD~2}"
+            local diff_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+            local max_diff=${CRYSTALLIZE_MAX_DIFF_CHARS:-50000}
+
+            # Always include stat (small, gives full file list)
+            local diff_stat
+            diff_stat=$(git -C "$repo_root" diff "${diff_sha}^..${diff_sha}" --stat 2>/dev/null || echo "(unavailable)")
+
+            # Full diff with tail truncation
+            local diff_full
+            diff_full=$(git -C "$repo_root" diff "${diff_sha}^..${diff_sha}" 2>/dev/null || echo "(unavailable)")
+            local diff_len=${#diff_full}
+            if [[ $diff_len -gt $max_diff ]]; then
+                diff_full="[... first $((diff_len - max_diff)) chars truncated — showing last ${max_diff} chars ...]
+${diff_full: -$max_diff}"
+            fi
+
+            # File list
+            local diff_files
+            diff_files=$(git -C "$repo_root" diff --name-only "${diff_sha}^..${diff_sha}" 2>/dev/null || echo "(unavailable)")
+
+            printf '%s\n\n' "FILES CHANGED:" > "$diff_file"
+            printf '%s\n\n' "$diff_files" >> "$diff_file"
+            printf '%s\n\n' "DIFF STAT:" >> "$diff_file"
+            printf '%s\n\n' "$diff_stat" >> "$diff_file"
+            printf '%s\n\n' "FULL DIFF:" >> "$diff_file"
+            printf '%s' "$diff_full" >> "$diff_file"
+
+            prompt="$(prompt_crystallize "$epic_num" "$title" "$repo_root" "$short_name" "$diff_file")"
+            rm -f "$diff_file"
             ;;
         *)
             log ERROR "Unknown phase: $phase"

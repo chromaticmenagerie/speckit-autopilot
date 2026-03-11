@@ -730,7 +730,7 @@ EOF
 # ─── Phase: Crystallize (post-merge context update) ─────────────────────────
 
 prompt_crystallize() {
-    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" diff_file="${5:-}"
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
@@ -739,6 +739,8 @@ the project's compressed context files so the next epic starts with current
 architectural understanding.
 
 1. Read the merge diff to understand what changed:
+   Read the pre-computed diff from: ${diff_file}
+   If the file is unavailable or truncated, you can also run:
    git diff ${LAST_MERGE_SHA:-HEAD~2}^..${LAST_MERGE_SHA:-HEAD~2} --stat
    git diff ${LAST_MERGE_SHA:-HEAD~2}^..${LAST_MERGE_SHA:-HEAD~2}
 
