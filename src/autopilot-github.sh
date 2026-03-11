@@ -88,7 +88,7 @@ gh_detect() {
 # Maps internal phase names to GitHub's 3 default board statuses.
 _gh_phase_to_status() {
     case "$1" in
-        implement|review|security-review|finalize-fix|finalize-review|crystallize)
+        implement|review|security-review|verify-ci|finalize-fix|finalize-review|crystallize)
             echo "In Progress" ;;
         done)
             echo "Done" ;;

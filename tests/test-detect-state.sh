@@ -130,6 +130,7 @@ cat > "$repo4/specs/003-secure-done/tasks.md" << 'TASKS'
 
 <!-- ANALYZED -->
 <!-- SECURITY_REVIEWED -->
+<!-- VERIFY_CI_COMPLETE -->
 TASKS
 git -C "$repo4" init -q
 git -C "$repo4" commit --allow-empty -m "init" -q
@@ -154,12 +155,36 @@ cat > "$repo5/specs/003-secure-skip/tasks.md" << 'TASKS'
 <!-- ANALYZED -->
 <!-- SECURITY_REVIEWED -->
 <!-- SECURITY_FORCE_SKIPPED -->
+<!-- VERIFY_CI_COMPLETE -->
 TASKS
 git -C "$repo5" init -q
 git -C "$repo5" commit --allow-empty -m "init" -q
 
 state=$(detect_state "$repo5" "003" "003-secure-skip" 2>/dev/null)
 assert_eq "review" "$state" "all tasks complete, force-skipped marker → review"
+
+# ─── Test: security reviewed but no CI verification → "verify-ci" ────────
+
+echo "Test: security reviewed, no CI verification returns 'verify-ci'"
+
+repo6="$TMPDIR/repo-verify-ci"
+mkdir -p "$repo6/specs/003-ci-pending"
+echo "# spec" > "$repo6/specs/003-ci-pending/spec.md"
+echo -e "<!-- CLARIFY_COMPLETE -->\n<!-- CLARIFY_VERIFIED -->" >> "$repo6/specs/003-ci-pending/spec.md"
+echo "# plan" > "$repo6/specs/003-ci-pending/plan.md"
+cat > "$repo6/specs/003-ci-pending/tasks.md" << 'TASKS'
+## Phase 1
+- [x] Task one
+- [x] Task two
+
+<!-- ANALYZED -->
+<!-- SECURITY_REVIEWED -->
+TASKS
+git -C "$repo6" init -q
+git -C "$repo6" commit --allow-empty -m "init" -q
+
+state=$(detect_state "$repo6" "003" "003-ci-pending" 2>/dev/null)
+assert_eq "verify-ci" "$state" "security reviewed, no VERIFY_CI_COMPLETE → verify-ci"
 
 # ─── Results ────────────────────────────────────────────────────────────────
 

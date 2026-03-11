@@ -14,9 +14,9 @@ BLUE='\033[0;34m'; CYAN='\033[0;36m'
 BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 # ─── Constants & Globals ─────────────────────────────────────────────────────
-PHASES=(specify clarify clarify-verify plan tasks analyze analyze-verify implement review merge crystallize)
+PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement security-review verify-ci review merge crystallize)
 SPINNER_CHARS=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
-POLL_INTERVAL=1; MIN_COLS=40; MIN_ROWS=20
+POLL_INTERVAL=1; MIN_COLS=40; MIN_ROWS=24
 REPO_ROOT=""; STATUS_FILE=""; EVENTS_FILE=""
 SPIN_IDX=0; TERM_ROWS=24; TERM_COLS=80; ALT_SCREEN_ACTIVE=false
 STATUS_EPIC=""; STATUS_PHASE=""; STATUS_COST=""; STATUS_TOKENS_IN=""
@@ -52,10 +52,13 @@ format_tokens() {
 
 short_phase() {
     case "$1" in
-        clarify-verify) echo "clarify-v" ;;
-        analyze-verify) echo "analyze-v" ;;
-        crystallize)    echo "crystal." ;;
-        *)              echo "$1" ;;
+        clarify-verify)  echo "clarify-v" ;;
+        analyze-verify)  echo "analyze-v" ;;
+        design-read)     echo "design" ;;
+        security-review) echo "sec-review" ;;
+        verify-ci)       echo "verify-ci" ;;
+        crystallize)     echo "crystal." ;;
+        *)               echo "$1" ;;
     esac
 }
 
