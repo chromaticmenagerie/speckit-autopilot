@@ -78,11 +78,15 @@ do_remote_merge() {
         "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
 
     # Step 1: Commit dirty tree before push
-    if ! git -C "$repo_root" diff --quiet 2>/dev/null || \
-       ! git -C "$repo_root" diff --cached --quiet 2>/dev/null; then
-        log WARN "Uncommitted changes — committing before push"
+    if [[ -n "$(git -C "$repo_root" status --porcelain --ignore-submodules=all 2>/dev/null)" ]]; then
+        log WARN "Uncommitted changes detected before push:"
+        git -C "$repo_root" status --short | while IFS= read -r line; do
+            log WARN "  $line"
+        done
         git -C "$repo_root" add -A
-        git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before push"
+        if ! git -C "$repo_root" diff --cached --quiet 2>/dev/null; then
+            git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before push" || return 1
+        fi
     fi
 
     # Step 2: Rebase and push
