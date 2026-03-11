@@ -635,6 +635,75 @@ CRITICAL: After completing ALL steps above (including all fixes, commits, and cl
 EOF
 }
 
+prompt_verify_ci_fix() {
+    local epic_num="$1" title="$2" repo_root="$3" ci_output="$4" round="$5" max_rounds="$6" prior_warnings="${7:-}"
+    local git_diff
+    git_diff=$(git -C "$repo_root" diff --stat 2>/dev/null || true)
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+## CI Verification Fix — Round ${round}/${max_rounds}
+
+The full CI pipeline failed before merge. Fix these failures with MINIMAL, targeted changes.
+
+### CI Output
+\`\`\`
+${ci_output}
+\`\`\`
+
+### Working Tree Changes
+\`\`\`
+${git_diff}
+\`\`\`
+If generated files appear above, run the project's generate command and commit the result.
+
+$(if [[ -n "$prior_warnings" ]]; then
+cat <<WARN_EOF
+
+### Prior Round Warnings
+The previous fix round was flagged for these issues — do NOT repeat them:
+\`\`\`
+${prior_warnings}
+\`\`\`
+WARN_EOF
+fi)
+
+### Test File Rules
+
+PERMITTED test file changes:
+- Adding stub methods to satisfy interface changes (Go interface compliance)
+- Updating import paths for renamed/moved files
+- Updating test helper function signatures and fixture data
+- Updating mock definitions to match changed interfaces
+- Updating build tags (//go:build)
+- Updating TestMain/test setup infrastructure
+- Adding new test cases for newly added behavior
+
+PROHIBITED test file changes:
+- Deleting, commenting out, or skipping test cases
+- Weakening assertions (e.g., assertEqual → assertContains, removing error checks)
+- Adding try/catch blocks that swallow errors
+- Changing expected values to match incorrect output
+
+### Instructions
+1. Parse the CI output. Identify the FIRST failing step and root cause.
+2. Read relevant source files.
+3. Fix ONLY the CI failure — do NOT perform elective refactoring. Only make structural changes (package moves, function splits) if strictly necessary to resolve the CI failure.
+4. If a test legitimately fails, fix the IMPLEMENTATION, not the test.
+5. Common fixes:
+   - Lint: unused imports/vars, formatting, type mismatches
+   - Test: assertion errors, missing mocks, race conditions
+   - Build: missing deps, type errors, import cycles
+   - Codegen staleness: run \`make generate\` (or project equivalent) and commit
+   - Format: run \`make fmt\` (or project equivalent) and commit
+   - Integration test: DB schema mismatch, missing migrations, container config
+6. If generated files are dirty in working tree, commit them — they are the correct versions.
+7. Commit:
+   git add <specific files>
+   git commit -m "fix(${epic_num}): resolve CI failures (round ${round})"
+EOF
+}
+
 # ─── Phase: Crystallize (post-merge context update) ─────────────────────────
 
 prompt_crystallize() {

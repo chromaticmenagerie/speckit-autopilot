@@ -61,6 +61,7 @@ declare -A PHASE_MODEL=(
     [self-review]="$OPUS"
     [review-fix]="$OPUS"
     [rebase-fix]="$OPUS"
+    [verify-ci-fix]="$SONNET"
 )
 
 # Phase → allowed tools
@@ -85,6 +86,7 @@ declare -A PHASE_TOOLS=(
     [self-review]="Read,Glob,Grep,Bash"
     [review-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [rebase-fix]="Read,Write,Edit,Bash,Glob,Grep"
+    [verify-ci-fix]="Read,Write,Edit,Bash,Glob,Grep"
 )
 
 # Phase → max retries (convergence phases get more attempts)
@@ -109,6 +111,7 @@ declare -A PHASE_MAX_RETRIES=(
     [self-review]=1
     [review-fix]=3
     [rebase-fix]=3
+    [verify-ci-fix]=3
 )
 
 # ─── Argument Parsing ────────────────────────────────────────────────────────
@@ -534,6 +537,97 @@ SEOF
     return 0
 }
 
+_run_verify_ci_gate() {
+    local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
+    local max_rounds=3 round=0 ci_passed=false
+    local tasks_file="$repo_root/specs/$short_name/tasks.md"
+    local events_log="$repo_root/.specify/logs/events.jsonl"
+
+    # Skip if already completed (resume support)
+    if [[ -f "$tasks_file" ]] && grep -q '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file" 2>/dev/null; then
+        log INFO "verify-ci already complete — skipping"
+        return 0
+    fi
+
+    # Fast-path: no CI capabilities configured — auto-pass
+    if [[ -z "${PROJECT_CI_CMD:-}" ]] && [[ -z "${PROJECT_TEST_CMD:-}" ]] && \
+       [[ -z "${PROJECT_LINT_CMD:-}" ]] && [[ -z "${PROJECT_BUILD_CMD:-}" ]]; then
+        log INFO "No CI capabilities configured — auto-passing verify-ci"
+        echo "" >> "$tasks_file"
+        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+        (cd "$repo_root" && git add "$tasks_file" && \
+         git commit -m "chore(${epic_num}): verify-ci auto-passed (no CI configured)" 2>/dev/null || true)
+        return 0
+    fi
+
+    log PHASE "Verify-CI gate (max $max_rounds rounds)"
+    CI_FIX_WARNINGS=""
+
+    while [[ $round -lt $max_rounds ]]; do
+        round=$((round + 1))
+        log INFO "CI verification round $round/$max_rounds"
+
+        if verify_ci "$repo_root"; then
+            ci_passed=true
+            log OK "CI passed (round $round)"
+            break
+        fi
+
+        log WARN "CI failed (round $round/$max_rounds)"
+        [[ $round -ge $max_rounds ]] && break
+
+        # Record HEAD before fix for test modification detection
+        local head_before
+        head_before=$(git -C "$repo_root" rev-parse HEAD)
+
+        local fix_prompt
+        fix_prompt="$(prompt_verify_ci_fix "$epic_num" "$title" "$repo_root" "$LAST_CI_OUTPUT" "$round" "$max_rounds" "$CI_FIX_WARNINGS")"
+
+        if $DRY_RUN; then
+            log INFO "[DRY RUN] Would invoke Sonnet to fix CI failures"
+        else
+            invoke_claude "verify-ci-fix" "$fix_prompt" "$epic_num" "$title" || {
+                log WARN "verify-ci-fix invocation failed (round $round)"
+            }
+
+            # Detect test file modifications
+            _detect_test_modifications "$repo_root" "$head_before"
+            if [[ -n "$CI_FIX_TEST_WARN" ]]; then
+                CI_FIX_WARNINGS="${CI_FIX_WARNINGS:+$CI_FIX_WARNINGS$'\n'}Round $round: $CI_FIX_TEST_WARN"
+
+                # Emit structured event for observability
+                [[ -f "$events_log" ]] && \
+                    _emit_event "$events_log" "ci_fix_test_modification" \
+                        "{\"round\":$round,\"detail\":\"$CI_FIX_TEST_WARN\"}"
+
+                # Halt on net assertion deletion — almost never a correct CI fix
+                if [[ "$CI_FIX_TEST_WARN" == ERROR:* ]]; then
+                    log ERROR "Net assertion deletion detected — halting CI fix loop"
+                    break
+                fi
+            fi
+        fi
+        _accumulate_phase_cost "$repo_root"
+    done
+
+    # Always write marker and return 0 (like security gate pattern)
+    echo "" >> "$tasks_file"
+    if $ci_passed; then
+        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+        local commit_msg="chore(${epic_num}): CI verification passed"
+        [[ -n "$CI_FIX_WARNINGS" ]] && commit_msg="chore(${epic_num}): CI verification passed (test modifications detected)"
+        (cd "$repo_root" && git add "$tasks_file" && \
+         git commit -m "$commit_msg" 2>/dev/null || true)
+    else
+        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+        echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+        log WARN "CI still failing after $max_rounds rounds — force-advancing"
+        (cd "$repo_root" && git add "$tasks_file" && \
+         git commit -m "chore(${epic_num}): CI verification force-skipped after $max_rounds rounds" 2>/dev/null || true)
+    fi
+    return 0
+}
+
 # ─── Prefix Self-Healing ───────────────────────────────────────────────────
 
 # Rename branch + specs dir when the numeric prefix doesn't match the epic number.
@@ -684,6 +778,12 @@ run_epic() {
             continue  # re-detect state → should now be "review"
         fi
 
+        # Verify-CI gate — run full CI pipeline before review
+        if [[ "$state" == "verify-ci" ]]; then
+            _run_verify_ci_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
+            continue  # re-detect state → should now be "review"
+        fi
+
         if [[ "$state" == "review" ]]; then
             # Review first, then merge
             local retries=0
@@ -705,6 +805,23 @@ run_epic() {
             log INFO "Review phase complete — transitioning to merge gate"
             log INFO "Current branch: $(git -C "$repo_root" branch --show-current 2>/dev/null || echo 'unknown')"
             log INFO "Working tree clean: $(git -C "$repo_root" status --porcelain 2>/dev/null | wc -l | tr -d ' ') uncommitted files"
+
+            # ── Tiered automated review (CodeRabbit / Codex / Claude self-review) ──
+            if [[ "${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}" != "true" ]]; then
+                local events_log="$repo_root/.specify/logs/events.jsonl"
+                _tiered_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$events_log" || {
+                    log ERROR "Tiered review failed — halting before merge"
+                    return 1
+                }
+                # Write resumability marker
+                local _tasks_md="$repo_root/specs/$short_name/tasks.md"
+                if [[ -f "$_tasks_md" ]] && ! grep -q '<!-- TIERED_REVIEW_COMPLETE -->' "$_tasks_md"; then
+                    echo "" >> "$_tasks_md"
+                    echo "<!-- TIERED_REVIEW_COMPLETE -->" >> "$_tasks_md"
+                    (cd "$repo_root" && git add "$_tasks_md" && \
+                     git commit -m "chore(${epic_num}): tiered review complete" 2>/dev/null || true)
+                fi
+            fi
 
             # Merge gate
 

@@ -77,14 +77,7 @@ do_remote_merge() {
     _emit_event "$events_log" "remote_merge_start" \
         "$(jq -nc --arg e "$epic_num" '{epic:$e}')"
 
-    # Step 1: Code review (tiered — CLI, Codex, self-review)
-    if [[ "${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}" != "true" ]]; then
-        _tiered_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$events_log" || {
-            return 1
-        }
-    fi
-
-    # Step 2: Commit dirty tree before push
+    # Step 1: Commit dirty tree before push
     if ! git -C "$repo_root" diff --quiet 2>/dev/null || \
        ! git -C "$repo_root" diff --cached --quiet 2>/dev/null; then
         log WARN "Uncommitted changes — committing before push"
@@ -92,13 +85,13 @@ do_remote_merge() {
         git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before push"
     fi
 
-    # Step 3: Rebase and push
+    # Step 2: Rebase and push
     if ! _rebase_and_push "$repo_root" "$epic_num" "$short_name" "$title" "$events_log"; then
         log ERROR "Rebase/push failed — stopping. Resolve and re-run: ./autopilot.sh $epic_num"
         return 1
     fi
 
-    # Step 4: Create PR
+    # Step 3: Create PR
     local pr_num
     pr_num=$(_create_or_find_pr "$repo_root" "$epic_num" "$short_name" "$title" "$events_log") || {
         log ERROR "PR creation failed"
@@ -106,20 +99,20 @@ do_remote_merge() {
     }
     LAST_PR_NUMBER="$pr_num"
 
-    # Step 5: CodeRabbit PR review — removed in v0.6.0
+    # Step 4: CodeRabbit PR review — removed in v0.6.0
     [[ -z "$LAST_CR_STATUS" ]] && LAST_CR_STATUS="skipped"  # preserve CLI review status if set
 
-    # Step 6: Merge PR
+    # Step 5: Merge PR
     if ! _check_and_merge_pr "$repo_root" "$epic_num" "$short_name" "$title" "$pr_num" "$events_log"; then
         log ERROR "PR merge failed"
         return 1
     fi
 
-    # Step 6b: Sync GitHub Projects (close task/epic issues)
+    # Step 5b: Sync GitHub Projects (close task/epic issues)
     gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md" || \
         log WARN "GitHub sync-done failed — continuing with cleanup"
 
-    # Step 7: Post-merge cleanup
+    # Step 6: Post-merge cleanup
     _post_merge_cleanup "$repo_root" "$epic_num" "$short_name" "$epic_file"
 
     _emit_event "$events_log" "remote_merge_complete" \
@@ -143,14 +136,20 @@ _rebase_and_push() {
     # Skip rebase if branch already includes base — avoids unnecessary rebase+push
     if git -C "$repo_root" merge-base --is-ancestor "origin/$MERGE_TARGET" HEAD 2>/dev/null; then
         log OK "Branch already up-to-date with origin/$MERGE_TARGET — skipping rebase"
-        # Still push in case local commits haven't been pushed yet
-        log INFO "Pushing $short_name to origin"
-        local push_output
-        push_output=$(git -C "$repo_root" push -u origin "$short_name" --force-with-lease 2>&1) || {
-            log ERROR "Push failed: ${push_output:0:500}"
-            return 1
-        }
-        log OK "Pushed $short_name to origin"
+        # Still verify — review-fix changes may have been made after verify-ci
+        if [[ -n "${PROJECT_TEST_CMD:-}" ]]; then
+            if ! verify_tests "$repo_root"; then
+                log ERROR "Tests failing on up-to-date branch — stopping"
+                return 1
+            fi
+        fi
+        if [[ -n "${PROJECT_BUILD_CMD:-}" ]]; then
+            if ! verify_build "$repo_root"; then
+                log ERROR "Build failing on up-to-date branch — stopping"
+                return 1
+            fi
+        fi
+        git -C "$repo_root" push -u origin "$short_name" --force-with-lease
         return 0
     fi
 
@@ -216,13 +215,18 @@ _rebase_and_push() {
     # Verify tests pass after rebase
     if [[ -n "${PROJECT_TEST_CMD:-}" ]]; then
         if ! verify_tests "$repo_root"; then
-            log WARN "Tests fail after rebase — invoking fix"
+            log WARN "Tests fail after rebase — invoking fix (attempt 1/2)"
             local fix_prompt
             fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "")"
             invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
             if ! verify_tests "$repo_root"; then
-                log ERROR "Tests still failing after rebase — stopping"
-                return 1
+                log WARN "Tests still failing — invoking fix (attempt 2/2)"
+                fix_prompt="$(prompt_finalize_fix "$repo_root" "$LAST_TEST_OUTPUT" "")"
+                invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
+                if ! verify_tests "$repo_root"; then
+                    log ERROR "Tests still failing after 2 fix attempts — stopping"
+                    return 1
+                fi
             fi
         fi
     fi
@@ -230,9 +234,21 @@ _rebase_and_push() {
     # Verify build passes after rebase
     if [[ -n "${PROJECT_BUILD_CMD:-}" ]]; then
         if ! verify_build "$repo_root"; then
-            log ERROR "Build failed — aborting merge"
-            log ERROR "Output: $LAST_BUILD_OUTPUT"
-            return 1
+            log WARN "Build failed after rebase — invoking fix"
+            local fix_prompt
+            fix_prompt="$(prompt_finalize_fix "$repo_root" "" "$LAST_BUILD_OUTPUT")"
+            invoke_claude "rebase-fix" "$fix_prompt" "$epic_num" "$title" || true
+            if ! verify_build "$repo_root"; then
+                log ERROR "Build still failing after fix attempt — stopping"
+                return 1
+            fi
+        fi
+    fi
+
+    # Verify lint (non-blocking — warn only, matches do_merge behavior)
+    if [[ -n "${PROJECT_LINT_CMD:-}" ]]; then
+        if ! verify_lint "$repo_root"; then
+            log WARN "Lint issues after rebase — proceeding (non-blocking)"
         fi
     fi
 

@@ -286,6 +286,8 @@ detect_state() {
             echo "done"
         elif ! grep -q '<!-- SECURITY_REVIEWED -->' "$spec_dir/tasks.md" 2>/dev/null; then
             echo "security-review"
+        elif ! grep -q '<!-- VERIFY_CI_COMPLETE -->' "$spec_dir/tasks.md" 2>/dev/null; then
+            echo "verify-ci"
         else
             echo "review"
         fi
@@ -538,6 +540,22 @@ load_project_config() {
     CONVERGENCE_STALL_ROUNDS=2
     CODERABBIT_MAX_ROUNDS=3
     MERGE_STRATEGY="merge"
+    PROJECT_CI_CMD="${PROJECT_CI_CMD:-}"
+    PROJECT_FMT_CHECK_CMD="${PROJECT_FMT_CHECK_CMD:-}"
+    PROJECT_CODEGEN_CHECK_CMD="${PROJECT_CODEGEN_CHECK_CMD:-}"
+    PROJECT_INTEGRATION_CMD="${PROJECT_INTEGRATION_CMD:-}"
+    PROJECT_E2E_CMD="${PROJECT_E2E_CMD:-}"
+    PROJECT_FE_PKG_MANAGER="${PROJECT_FE_PKG_MANAGER:-}"
+    PROJECT_FE_DIR="${PROJECT_FE_DIR:-}"
+    PROJECT_FE_INSTALL_CMD="${PROJECT_FE_INSTALL_CMD:-}"
+    HAS_DOCKER="${HAS_DOCKER:-false}"
+    # Defaults for detection-time flags (may be missing from stale project.env files).
+    # All consumers already guard with ${VAR:-false}, so these are belt-and-suspenders.
+    HAS_FRONTEND="${HAS_FRONTEND:-false}"
+    HAS_CODERABBIT="${HAS_CODERABBIT:-false}"
+    HAS_CODEX="${HAS_CODEX:-false}"
+    HAS_REMOTE="${HAS_REMOTE:-false}"
+    HAS_GH_CLI="${HAS_GH_CLI:-false}"
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."
@@ -557,13 +575,17 @@ load_project_config() {
     set -a; source "$config_file"; set +a
     log INFO "Loaded project config from $config_file"
 
-    # Backwards-compat: derive new flags from legacy flag if not explicitly set
-    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_STALL" ]]; then
-        FORCE_ADVANCE_ON_REVIEW_STALL="${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}"
+    # Legacy umbrella flag — deprecated, use granular flags instead
+    if [[ "${FORCE_ADVANCE_ON_REVIEW_FAIL:-}" == "true" ]]; then
+        log WARN "FORCE_ADVANCE_ON_REVIEW_FAIL is deprecated — use FORCE_ADVANCE_ON_REVIEW_STALL, FORCE_ADVANCE_ON_DIMINISHING_RETURNS, FORCE_ADVANCE_ON_REVIEW_ERROR instead"
+        FORCE_ADVANCE_ON_REVIEW_STALL="${FORCE_ADVANCE_ON_REVIEW_STALL:-true}"
+        FORCE_ADVANCE_ON_DIMINISHING_RETURNS="${FORCE_ADVANCE_ON_DIMINISHING_RETURNS:-true}"
+        FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_ERROR:-true}"
     fi
-    if [[ -z "$FORCE_ADVANCE_ON_REVIEW_ERROR" ]]; then
-        FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_FAIL:-false}"
-    fi
+    # Defaults for granular flags (all false if not set)
+    FORCE_ADVANCE_ON_REVIEW_STALL="${FORCE_ADVANCE_ON_REVIEW_STALL:-false}"
+    FORCE_ADVANCE_ON_DIMINISHING_RETURNS="${FORCE_ADVANCE_ON_DIMINISHING_RETURNS:-false}"
+    FORCE_ADVANCE_ON_REVIEW_ERROR="${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}"
 
     # Review tier config (backward compat)
     SKIP_REVIEW="${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}"
@@ -581,6 +603,20 @@ load_project_config() {
     fi
     if [[ -z "$PROJECT_LINT_CMD" ]]; then
         log WARN "PROJECT_LINT_CMD is empty — lint steps will be skipped"
+    fi
+
+    if [[ -n "$PROJECT_CI_CMD" ]]; then
+        log INFO "Full CI: $PROJECT_CI_CMD"
+    else
+        local _ci_steps=()
+        [[ -n "$PROJECT_FMT_CHECK_CMD" ]] && _ci_steps+=("fmt")
+        [[ -n "$PROJECT_CODEGEN_CHECK_CMD" ]] && _ci_steps+=("codegen")
+        [[ -n "$PROJECT_LINT_CMD" ]] && _ci_steps+=("lint")
+        [[ -n "$PROJECT_TEST_CMD" ]] && _ci_steps+=("test")
+        [[ -n "$PROJECT_INTEGRATION_CMD" ]] && _ci_steps+=("integration")
+        [[ -n "$PROJECT_BUILD_CMD" ]] && _ci_steps+=("build")
+        [[ -n "$PROJECT_E2E_CMD" ]] && _ci_steps+=("e2e")
+        log INFO "Composed CI: ${_ci_steps[*]:-"(none)"}"
     fi
 }
 
