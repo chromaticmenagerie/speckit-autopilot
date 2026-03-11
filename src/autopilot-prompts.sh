@@ -733,8 +733,8 @@ the project's compressed context files so the next epic starts with current
 architectural understanding.
 
 1. Read the merge diff to understand what changed:
-   git diff HEAD~1..HEAD --stat
-   git diff HEAD~1..HEAD
+   git diff ${LAST_MERGE_SHA:-HEAD~2}^..${LAST_MERGE_SHA:-HEAD~2} --stat
+   git diff ${LAST_MERGE_SHA:-HEAD~2}^..${LAST_MERGE_SHA:-HEAD~2}
 
 2. Read current context files:
    - CLAUDE.md (look at content between <!-- MANUAL ADDITIONS START --> and <!-- MANUAL ADDITIONS END -->)

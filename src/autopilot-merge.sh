@@ -15,6 +15,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 # Globals set during remote merge, read by write_epic_summary()
 LAST_PR_NUMBER=""
 LAST_CR_STATUS=""
+LAST_MERGE_SHA=""
 
 # do_merge() (local fallback) remains in autopilot.sh
 
@@ -425,6 +426,16 @@ _post_merge_cleanup() {
     git -C "$repo_root" pull origin "$MERGE_TARGET" || {
         log WARN "git pull failed — continuing"
     }
+
+    # Capture merge commit SHA before YAML marker commit moves HEAD forward
+    LAST_MERGE_SHA=$(git -C "$repo_root" log --oneline 2>/dev/null \
+        | grep -iE "(merge.*${short_name}|feat\(${epic_num}\):)" \
+        | head -1 | awk '{print $1}' || true)
+    if [[ -n "$LAST_MERGE_SHA" ]]; then
+        log INFO "Merge commit SHA: $LAST_MERGE_SHA"
+    else
+        log WARN "Could not identify merge commit SHA — crystallize diff may be incomplete"
+    fi
 
     # Step 2: Mark epic as merged on the BASE branch (durable state)
     if [[ -n "$epic_file" ]] && [[ -f "$epic_file" ]]; then
