@@ -257,6 +257,7 @@ run_phase() {
     local epic_file="$5"
     local repo_root="$6"
     local spec_dir="$repo_root/specs/$short_name"
+    local round="${7:-1}" max_rounds="${8:-5}"
 
     local prompt=""
 
@@ -265,7 +266,7 @@ run_phase() {
             prompt="$(prompt_specify "$epic_num" "$title" "$epic_file" "$repo_root")"
             ;;
         clarify)
-            prompt="$(prompt_clarify "$epic_num" "$title" "$epic_file" "$repo_root" "$spec_dir")"
+            prompt="$(prompt_clarify "$epic_num" "$title" "$epic_file" "$repo_root" "$spec_dir" "$round" "$max_rounds")"
             ;;
         clarify-verify)
             prompt="$(prompt_clarify_verify "$epic_num" "$title" "$repo_root" "$spec_dir")"
@@ -288,10 +289,10 @@ run_phase() {
             prompt="$(prompt_tasks "$epic_num" "$title" "$repo_root")"
             ;;
         analyze)
-            prompt="$(prompt_analyze "$epic_num" "$title" "$repo_root" "$spec_dir")"
+            prompt="$(prompt_analyze "$epic_num" "$title" "$repo_root" "$spec_dir" "$round" "$max_rounds")"
             ;;
         analyze-verify)
-            prompt="$(prompt_analyze_verify "$epic_num" "$title" "$repo_root" "$spec_dir")"
+            prompt="$(prompt_analyze_verify "$epic_num" "$title" "$repo_root" "$spec_dir" "$round" "$max_rounds")"
             ;;
         implement)
             prompt="$(prompt_implement "$epic_num" "$title" "$repo_root" "$spec_dir")"
@@ -358,11 +359,15 @@ do_merge() {
     fi
 
     # Ensure working tree is clean before switching branches
-    if ! git -C "$repo_root" diff --quiet 2>/dev/null || \
-       ! git -C "$repo_root" diff --cached --quiet 2>/dev/null; then
-        log WARN "Uncommitted changes — committing before merge"
+    if [[ -n "$(git -C "$repo_root" status --porcelain --ignore-submodules=all 2>/dev/null)" ]]; then
+        log WARN "Uncommitted changes detected before merge:"
+        git -C "$repo_root" status --short | while IFS= read -r line; do
+            log WARN "  $line"
+        done
         git -C "$repo_root" add -A
-        git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before merge"
+        if ! git -C "$repo_root" diff --cached --quiet 2>/dev/null; then
+            git -C "$repo_root" commit -m "chore(${epic_num}): commit remaining changes before merge" || return 1
+        fi
     fi
 
     # Verify tests pass before merging
@@ -788,7 +793,7 @@ run_epic() {
             # Review first, then merge
             local retries=0
             while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
-                if run_phase "review" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root"; then
+                if run_phase "review" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "$((retries + 1))" "${PHASE_MAX_RETRIES[$state]:-3}"; then
                     _accumulate_phase_cost "$repo_root"
                     break
                 fi
@@ -843,7 +848,7 @@ run_epic() {
 
             # Post-merge crystallization — update context files on base branch
             # Non-blocking: failure does not stop the pipeline
-            if ! run_phase "crystallize" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root"; then
+            if ! run_phase "crystallize" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "1" "1"; then
                 log WARN "Crystallize phase failed — continuing (non-blocking)"
             fi
             _accumulate_phase_cost "$repo_root"
@@ -859,7 +864,7 @@ run_epic() {
 
         while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
             local phase_exit=0
-            run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" || phase_exit=$?
+            run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "$((retries + 1))" "${PHASE_MAX_RETRIES[$state]:-3}" || phase_exit=$?
             # Always accumulate cost after every phase attempt (success or failure)
             _accumulate_phase_cost "$repo_root"
             if [[ $phase_exit -eq 0 ]]; then

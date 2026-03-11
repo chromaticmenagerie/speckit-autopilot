@@ -42,6 +42,10 @@ After the skill completes, verify that spec.md was created in the specs/ directo
 When the skill creates a feature branch, ensure it uses the epic number ${epic_num}
 as the branch prefix (e.g., ${epic_num}-feature-name). This is required for the
 orchestrator's state detection to work correctly.
+
+After the skill completes and spec.md exists, commit the specification:
+  git add specs/*/spec.md
+  git commit -m "docs(${epic_num}): initial specification"
 EOF
 }
 
@@ -49,6 +53,7 @@ EOF
 
 prompt_clarify() {
     local epic_num="$1" title="$2" epic_file="$3" repo_root="$4" spec_dir="$5"
+    local round="${6:-1}" max_rounds="${7:-5}"
     local spec_dir_name
     spec_dir_name="$(basename "$spec_dir")"
     cat <<EOF
@@ -73,14 +78,14 @@ If ZERO observations (the skill reports no issues or underspecified areas):
      <!-- CLARIFY_COMPLETE -->
   2. Commit:
      git add specs/${spec_dir_name}/
-     git commit -m "docs(${epic_num}): clarify complete — zero observations"
+     git commit -m "docs(${epic_num}): clarify round ${round}/${max_rounds} — zero observations"
 
 If observations WERE found (the skill reported issues, questions, or underspecified areas):
   1. Ensure all fixes and answers have been applied to spec.md
   2. Do NOT add <!-- CLARIFY_COMPLETE -->
   3. Commit fixes:
      git add specs/${spec_dir_name}/
-     git commit -m "fix(${epic_num}): resolve clarify observations"
+     git commit -m "fix(${epic_num}): clarify round ${round}/${max_rounds} — resolve observations"
 
 The orchestrator will re-run /speckit.clarify in a fresh context until zero observations
 are reported, up to a maximum of 5 rounds.
@@ -149,6 +154,10 @@ Then perform a senior developer critique of the plan:
 - Check for missing test coverage
 - Check file size / complexity concerns (per CLAUDE.md conventions)
 Apply any fixes directly to the artifacts.
+
+After the skill completes and plan artifacts exist, commit them:
+  git add specs/*/
+  git commit -m "docs(${epic_num}): planning artifacts"
 EOF
 }
 
@@ -165,6 +174,10 @@ Invoke the Skill tool:
 The skill will read the plan and spec to generate tasks.md with dependency-ordered, phased tasks.
 
 After the skill completes, verify that tasks.md was created and contains Phase headers and task checkboxes.
+
+After the skill completes and tasks.md exists, commit it:
+  git add specs/*/tasks.md
+  git commit -m "docs(${epic_num}): task breakdown"
 EOF
 }
 
@@ -172,6 +185,7 @@ EOF
 
 prompt_analyze() {
     local epic_num="$1" title="$2" repo_root="$3" spec_dir="$4"
+    local round="${5:-1}" max_rounds="${6:-5}"
     local spec_dir_name
     spec_dir_name="$(basename "$spec_dir")"
     cat <<EOF
@@ -193,7 +207,7 @@ If ZERO issues are found (no CRITICAL, HIGH, MEDIUM, or LOW findings):
      <!-- ANALYZED -->
   2. Commit:
      git add specs/${spec_dir_name}/
-     git commit -m "docs(${epic_num}): spec artifacts ready for implementation"
+     git commit -m "docs(${epic_num}): analyze round ${round}/${max_rounds} — artifacts ready"
 
 If ANY issues are found:
   1. Fix ALL issues in the artifacts (spec.md, plan.md, tasks.md) directly
@@ -202,7 +216,7 @@ If ANY issues are found:
      <!-- FIXES APPLIED -->
   4. Commit fixes:
      git add specs/${spec_dir_name}/
-     git commit -m "fix(${epic_num}): resolve analysis findings"
+     git commit -m "fix(${epic_num}): analyze round ${round}/${max_rounds} — resolve findings"
 
 The orchestrator will re-run /speckit.analyze in a fresh context until zero issues
 are reported, up to a maximum of 5 rounds.
@@ -213,6 +227,7 @@ EOF
 
 prompt_analyze_verify() {
     local epic_num="$1" title="$2" repo_root="$3" spec_dir="$4"
+    local round="${5:-1}" max_rounds="${6:-5}"
     local spec_dir_name
     spec_dir_name="$(basename "$spec_dir")"
     cat <<EOF
@@ -229,14 +244,14 @@ If ANY issues remain:
   1. Remove the <!-- FIXES APPLIED --> line from tasks.md
   2. Commit:
      git add specs/${spec_dir_name}/
-     git commit -m "fix(${epic_num}): reset analyze state — issues remain"
+     git commit -m "fix(${epic_num}): analyze-verify round ${round}/${max_rounds} — issues remain"
   The orchestrator will loop back to full analyze in a fresh context.
 
 If zero issues:
   1. Replace <!-- FIXES APPLIED --> with <!-- ANALYZED --> in tasks.md
   2. Commit:
      git add specs/${spec_dir_name}/
-     git commit -m "docs(${epic_num}): spec artifacts ready for implementation"
+     git commit -m "docs(${epic_num}): analyze round ${round}/${max_rounds} — artifacts ready"
 EOF
 }
 
@@ -424,7 +439,7 @@ The skill will:
 - Execute sequential tasks in dependency order
 - Follow strict TDD for each task (test first, implement, verify)
 - Mark each task [x] in tasks.md after completion
-- The skill does NOT commit — you will commit after verification below
+- The skill does NOT commit — you will commit per-phase after verification below
 
 After the skill completes, verify:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "  cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
@@ -439,27 +454,29 @@ When working on frontend/UI components, apply WCAG 2.1 AA accessibility standard
 A11Y
 fi)
 
-After tests and lint pass, commit all changes in meaningful groups with good commit messages.
+After tests and lint pass, commit changes grouped by implementation phase/user story.
 
 Run: git status --short
 
-Then commit in logical groups. For each group:
-  1. Stage only the files belonging to that group
-  2. If nothing was staged, skip to the next group
-  3. Commit with format: <type>(${epic_num}): <descriptive message>
+Review the output. Then commit in phase-based groups — one commit per implementation phase or user story.
+For each group:
+  1. Stage only the files belonging to that phase/user story
+  2. Run: git diff --cached --stat
+  3. Verify the staged files match the phase scope
+  4. If nothing was staged, skip to the next group
+  5. Commit with format: <type>(${epic_num}): <phase/user-story description>
 
-Recommended grouping (adapt to the actual project structure — skip empty groups):
-  - Database migrations and generated query/model files
-  - Domain/business logic packages (excluding tests)
-  - API contracts, generated stubs, handlers, and server wiring
-  - Frontend routes and components
-  - Test files
-  - Remaining files (config, docs, tooling, tasks.md)
+Example grouping (adapt to the actual tasks.md phases):
+  - Phase 1 setup/types: git commit -m "feat(${epic_num}): setup types and project structure"
+  - Phase 2 test stubs: git commit -m "test(${epic_num}): add test stubs for US1"
+  - Phase 3 US1 implementation: git commit -m "feat(${epic_num}): implement US1 — <description>"
+  - Phase 4 US2 implementation: git commit -m "feat(${epic_num}): implement US2 — <description>"
 
-Use "feat" for new functionality, "chore" for config/tooling.
+Use "feat" for new functionality, "test" for test files, "chore" for config/tooling.
 Stage specific files or directories — never use "git add -A" or "git add ."
 After all groups committed, verify: git status shows a clean working tree.
-If any files still remain: git add -A && git commit -m "chore(${epic_num}): remaining implementation files"
+If any files still remain, investigate why they were not included in a phase group.
+Stage them explicitly with a descriptive commit message — do NOT use "git add -A".
 EOF
 }
 
