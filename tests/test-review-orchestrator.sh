@@ -155,7 +155,7 @@ CONVERGENCE_STALL_ROUNDS=99
 DIMINISHING_RETURNS_THRESHOLD=99
 
 rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" || rc=$?
-assert_eq "0" "$rc" "max-rounds+force: returns 0"
+assert_eq "3" "$rc" "max-rounds+force: returns 3 (force-advance, fall through to next tier)"
 echo "$LAST_CR_STATUS" | grep -q "force-advanced" && _found_force=0 || _found_force=1
 assert_eq "0" "$_found_force" "max-rounds+force: LAST_CR_STATUS contains 'force-advanced'"
 

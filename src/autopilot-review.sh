@@ -169,7 +169,7 @@ _tiered_review() {
                     tier_succeeded=true
                     break
                 fi
-                # loop_rc=1 (unresolved issues) or loop_rc=2 (tier error) — fall through
+                # loop_rc=1 (unresolved, halted), loop_rc=2 (tier error), loop_rc=3 (force-advanced) — fall through
                 log WARN "Tier '$tier' fix loop exited with rc=$loop_rc — falling through to next tier"
                 ;;
             2)  # Tier error — fall through to next
@@ -258,7 +258,7 @@ _review_fix_loop() {
                 log WARN "Stalled — force-advancing"
                 _emit_event "$events_log" "review_convergence_complete" \
                     "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"force_advanced_stall\"}"
-                return 0
+                return 3
             fi
             LAST_CR_STATUS="halted (stall, tier: $tier, round $attempt)"
             log ERROR "Stalled — halting"
@@ -273,7 +273,7 @@ _review_fix_loop() {
             log WARN "Force-advancing after $attempt rounds (diminishing returns)"
             _emit_event "$events_log" "review_convergence_complete" \
                 "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"force_advanced_diminishing\"}"
-            return 0
+            return 3
         fi
 
         # ─ CLAUDE FIX ─
@@ -291,7 +291,7 @@ _review_fix_loop() {
         log WARN "Issues remain after $max_rounds rounds — force-advancing"
         _emit_event "$events_log" "review_convergence_complete" \
             "{\"tier\":\"$tier\",\"rounds_used\":$max_rounds,\"result\":\"force_advanced_max\"}"
-        return 0
+        return 3
     fi
     LAST_CR_STATUS="halted (issues remain after $max_rounds rounds, tier: $tier)"
     log ERROR "Issues remain after $max_rounds rounds"
