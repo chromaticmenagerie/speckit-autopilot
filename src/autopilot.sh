@@ -127,6 +127,7 @@ STRICT_DEPS=false
 ALLOW_DEFERRED=false
 SKIP_CODERABBIT=false
 SKIP_REVIEW=false
+SECURITY_FORCE_SKIP_ALLOWED=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -151,6 +152,7 @@ parse_args() {
                 ;;
             --strict-deps)      STRICT_DEPS=true ;;
             --allow-deferred)   ALLOW_DEFERRED=true ;;
+            --allow-security-skip)  SECURITY_FORCE_SKIP_ALLOWED=true ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
@@ -167,6 +169,7 @@ parse_args() {
                 echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
+                echo "  --allow-security-skip  Force-advance past unresolved security findings"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
@@ -425,6 +428,12 @@ do_merge() {
     fi
     log OK "Merged $short_name to $MERGE_TARGET"
 
+    # Capture merge commit SHA before YAML marker commit moves HEAD forward
+    LAST_MERGE_SHA=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)
+    if [[ -n "$LAST_MERGE_SHA" ]]; then
+        log INFO "Merge commit SHA: $LAST_MERGE_SHA"
+    fi
+
     gh_sync_done "$repo_root" "$epic_num" "$repo_root/specs/$short_name/tasks.md" || \
         log WARN "GitHub sync-done failed — continuing"
 
@@ -465,6 +474,21 @@ _run_security_gate() {
     local verdict=""
 
     log PHASE "Security gate (max $max_rounds rounds)"
+
+    # Resume guard: if previously halted, re-halt unless user opted in
+    if [[ -f "$tasks_file" ]] && grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null && \
+       ! grep -q '<!-- SECURITY_REVIEWED -->' "$tasks_file" 2>/dev/null; then
+        if [[ "${SECURITY_FORCE_SKIP_ALLOWED:-false}" == "true" ]]; then
+            log INFO "Security gate previously halted — --allow-security-skip passed, force-advancing"
+            echo "" >> "$tasks_file"
+            echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
+            (cd "$repo_root" && git add "$tasks_file" && \
+             git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip" 2>/dev/null || true)
+            return 0
+        fi
+        log ERROR "Security gate previously halted — re-run with --allow-security-skip to force-advance"
+        return 1
+    fi
 
     # Initialize findings file ONCE with header (overwrite any stale file from previous run)
     cat > "$findings_file" <<SEOF
@@ -524,12 +548,26 @@ SEOF
     # 6. Write marker (orchestrator responsibility — NEVER the model)
     if [[ -f "$tasks_file" ]]; then
         if [[ "$verdict" != "PASS" ]] && [[ $round -ge $max_rounds ]]; then
-            log WARN "Security gate: issues remain after $max_rounds rounds — force-advancing"
-            echo "" >> "$tasks_file"
-            echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
-            echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
-            (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
-             git commit -m "security-review(${epic_num}): force-skipped after ${max_rounds} rounds" 2>/dev/null || true)
+            if [[ "${SECURITY_FORCE_SKIP_ALLOWED:-false}" == "true" ]]; then
+                log WARN "Security gate: issues remain after $max_rounds rounds — force-advancing (--allow-security-skip)"
+                echo "" >> "$tasks_file"
+                echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
+                if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
+                    echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
+                fi
+                (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
+                 git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip after ${max_rounds} rounds" 2>/dev/null || true)
+            else
+                log ERROR "Security gate: unresolved findings after $max_rounds rounds — halting pipeline"
+                log ERROR "Re-run with --allow-security-skip to force-advance past security failures"
+                echo "" >> "$tasks_file"
+                if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
+                    echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
+                fi
+                (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
+                 git commit -m "security-review(${epic_num}): halted — unresolved findings after ${max_rounds} rounds" 2>/dev/null || true)
+                return 1
+            fi
         else
             log OK "Security gate: passed"
             echo "" >> "$tasks_file"
@@ -779,7 +817,10 @@ run_epic() {
         fi
 
         if [[ "$state" == "security-review" ]]; then
-            _run_security_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
+            if ! _run_security_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
+                log ERROR "Security gate halted pipeline — re-run with --allow-security-skip to force-advance"
+                return 1
+            fi
             continue  # re-detect state → should now be "review"
         fi
 
