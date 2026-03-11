@@ -128,6 +128,7 @@ ALLOW_DEFERRED=false
 SKIP_CODERABBIT=false
 SKIP_REVIEW=false
 SECURITY_FORCE_SKIP_ALLOWED=false
+MAX_ITERATIONS=""   # CLI override for iteration safety limit
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -154,6 +155,19 @@ parse_args() {
             --allow-deferred)   ALLOW_DEFERRED=true ;;
             --allow-security-skip)  SECURITY_FORCE_SKIP_ALLOWED=true ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
+            --max-iterations)
+                shift
+                MAX_ITERATIONS="$1"
+                if [[ -z "$MAX_ITERATIONS" ]] || ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
+                    echo "ERROR: --max-iterations requires a positive integer" >&2; exit 1
+                fi
+                if [[ $((10#$MAX_ITERATIONS)) -le 0 ]]; then
+                    echo "ERROR: --max-iterations must be > 0" >&2; exit 1
+                fi
+                if [[ $((10#$MAX_ITERATIONS)) -lt 15 ]]; then
+                    log WARN "MAX_ITERATIONS=$MAX_ITERATIONS is below typical minimum (~12 phases). Possible early termination."
+                fi
+                ;;
             --help|-h)
                 echo "Usage: autopilot.sh [epic-number] [--no-auto-continue] [--dry-run] [--silent]"
                 echo ""
@@ -170,6 +184,7 @@ parse_args() {
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 echo "  --allow-security-skip  Force-advance past unresolved security findings"
+                echo "  --max-iterations N   Override iteration safety limit (default: 30)"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
@@ -835,13 +850,13 @@ run_epic() {
 
     # Phase loop
     local total_iterations=0
-    local MAX_TOTAL_ITERATIONS=30
+    local max_iter=${MAX_ITERATIONS:-30}
     local consecutive_deferred=0
 
     while true; do
         total_iterations=$((total_iterations + 1))
-        if [[ $total_iterations -gt $MAX_TOTAL_ITERATIONS ]]; then
-            log ERROR "Epic $epic_num exceeded $MAX_TOTAL_ITERATIONS total phase iterations — possible oscillation. Stopping."
+        if [[ $total_iterations -gt $max_iter ]]; then
+            log ERROR "Epic $epic_num exceeded $max_iter total phase iterations — possible oscillation. Stopping."
             log ERROR "Resume with: ./autopilot.sh $epic_num"
             return 1
         fi
