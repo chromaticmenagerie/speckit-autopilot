@@ -883,7 +883,7 @@ run_epic() {
 
     # Phase loop
     local total_iterations=0
-    local max_iter=${MAX_ITERATIONS:-30}
+    local max_iter=${MAX_ITERATIONS:-40}
     local consecutive_deferred=0
 
     while true; do
