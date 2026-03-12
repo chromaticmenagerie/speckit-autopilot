@@ -48,10 +48,6 @@ verify_tests() {
         echo "$skip_files" | while read -r f; do
             log ERROR "  - $f"
         done
-        # Write skip info for the review/implement phase to pick up
-        mkdir -p "$repo_root/.specify/logs"
-        echo "$skip_files" > "$repo_root/.specify/logs/skipped-tests.txt"
-        log ERROR "Skipped test list written to .specify/logs/skipped-tests.txt"
         return 1
     fi
 
