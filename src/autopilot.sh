@@ -33,6 +33,7 @@ source "$SCRIPT_DIR/autopilot-verify.sh"
 source "$SCRIPT_DIR/autopilot-finalize.sh"
 source "$SCRIPT_DIR/autopilot-validate.sh"
 source "$SCRIPT_DIR/autopilot-design.sh"
+source "$SCRIPT_DIR/autopilot-requirements.sh"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -56,6 +57,8 @@ declare -A PHASE_MODEL=(
     [finalize-review]="$OPUS"
     [coderabbit-fix]="$OPUS"
     [conflict-resolve]="$OPUS"
+    [verify-requirements]="$SONNET"
+    [requirements-fix]="$SONNET"
     [security-review]="$OPUS"
     [security-fix]="$OPUS"
     [self-review]="$OPUS"
@@ -81,6 +84,8 @@ declare -A PHASE_TOOLS=(
     [finalize-review]="Read,Write,Edit,Bash,Glob,Grep"
     [coderabbit-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
+    [verify-requirements]="Read,Write,Glob,Grep"
+    [requirements-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [security-review]="Read,Write,Glob,Grep"
     [security-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [self-review]="Read,Glob,Grep,Bash"
@@ -106,6 +111,8 @@ declare -A PHASE_MAX_RETRIES=(
     [finalize-review]=1
     [coderabbit-fix]=3
     [conflict-resolve]=3
+    [verify-requirements]=2
+    [requirements-fix]=2
     [security-review]=1
     [security-fix]=1
     [self-review]=1
@@ -128,6 +135,7 @@ ALLOW_DEFERRED=false
 SKIP_CODERABBIT=false
 SKIP_REVIEW=false
 SECURITY_FORCE_SKIP_ALLOWED=false
+REQUIREMENTS_FORCE_SKIP_ALLOWED=false
 MAX_ITERATIONS=""   # CLI override for iteration safety limit
 
 parse_args() {
@@ -154,6 +162,7 @@ parse_args() {
             --strict-deps)      STRICT_DEPS=true ;;
             --allow-deferred)   ALLOW_DEFERRED=true ;;
             --allow-security-skip)  SECURITY_FORCE_SKIP_ALLOWED=true ;;
+            --allow-requirements-skip)  REQUIREMENTS_FORCE_SKIP_ALLOWED=true ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --max-iterations)
                 shift
@@ -184,6 +193,7 @@ parse_args() {
                 echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 echo "  --allow-security-skip  Force-advance past unresolved security findings"
+                echo "  --allow-requirements-skip  Force-advance past unresolved requirements gaps"
                 echo "  --max-iterations N   Override iteration safety limit (default: 30)"
                 exit 0
                 ;;
@@ -909,6 +919,14 @@ run_epic() {
         # FR coverage check: warn (non-blocking) on transition to implement
         if [[ "$state" == "implement" ]] && [[ -n "$short_name" ]]; then
             check_fr_coverage "$repo_root/specs/$short_name" || true
+        fi
+
+        if [[ "$state" == "verify-requirements" ]]; then
+            if ! _run_requirements_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
+                log ERROR "Requirements verification halted. Use --allow-requirements-skip to force-advance."
+                return 1
+            fi
+            continue  # re-detect state → should now be "security-review"
         fi
 
         if [[ "$state" == "security-review" ]]; then

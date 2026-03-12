@@ -68,30 +68,30 @@ make_spec "001-mix-test" "## Phase 1
 result=$(detect_state "$TMPDIR_ROOT" "001" "001-mix-test")
 assert_eq "mix of [x] [-] [ ] → implement" "implement" "$result"
 
-# All [x] + some [-] → returns "security-review" (not implement)
+# All [x] + some [-] → returns "verify-requirements" (first post-implement gate)
 make_spec "002-done-deferred" "## Phase 1
 - [x] Done task 1
 - [x] Done task 2
 - [-] Deferred task"
 
 result=$(detect_state "$TMPDIR_ROOT" "002" "002-done-deferred")
-assert_eq "all [x] + some [-] → security-review" "security-review" "$result"
+assert_eq "all [x] + some [-] → verify-requirements" "verify-requirements" "$result"
 
-# All [-] zero [x] → returns "security-review" (not "tasks" edge case)
+# All [-] zero [x] → returns "verify-requirements" (not "tasks" edge case)
 make_spec "003-all-deferred" "## Phase 1
 - [-] Deferred task 1
 - [-] Deferred task 2"
 
 result=$(detect_state "$TMPDIR_ROOT" "003" "003-all-deferred")
-assert_eq "all [-] zero [x] → security-review" "security-review" "$result"
+assert_eq "all [-] zero [x] → verify-requirements" "verify-requirements" "$result"
 
-# All [x] no [-] → returns "security-review" (existing behavior preserved)
+# All [x] no [-] → returns "verify-requirements" (first post-implement gate)
 make_spec "004-all-done" "## Phase 1
 - [x] Done task 1
 - [x] Done task 2"
 
 result=$(detect_state "$TMPDIR_ROOT" "004" "004-all-done")
-assert_eq "all [x] no [-] → security-review (preserved)" "security-review" "$result"
+assert_eq "all [x] no [-] → verify-requirements" "verify-requirements" "$result"
 
 # ─── Tests: _gh_parse_tasks with deferred ───────────────────────────────────
 echo ""

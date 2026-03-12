@@ -1034,6 +1034,59 @@ Only report actual bugs, security issues, and correctness problems.
 PROMPT
 }
 
+# ─── Phase: Verify Requirements ──────────────────────────────────────────────
+
+prompt_verify_requirements() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
+    local evidence_file="$5" findings_file="$6" round="$7" max_rounds="$8"
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+# Verify Requirements — Round $round/$max_rounds
+
+Read the evidence file at $evidence_file. For each FR-NNN listed:
+
+1. Check the "Code references" — if NONE FOUND, classify as NOT_FOUND
+2. If code references exist, read those files and verify the FR's requirements are actually implemented (not just referenced in comments)
+3. Classify each FR as:
+   - PASS: Fully implemented and tested
+   - PARTIAL: Some aspects implemented, others missing
+   - NOT_FOUND: No implementation found
+   - DEFERRED: Task was marked [-] (intentionally deferred)
+
+Write your findings to $findings_file in this format:
+- FR-NNN: PASS|PARTIAL|NOT_FOUND|DEFERRED — brief explanation
+
+Be thorough but concise. Check actual code, not just file names.
+EOF
+}
+
+prompt_requirements_fix() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
+    local findings_file="$5" failing_frs="$6"
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+# Fix Requirement Gaps
+
+The following FRs were found to be NOT_FOUND or PARTIAL during requirements verification:
+
+$failing_frs
+
+Read the findings at $findings_file for details on what is missing.
+
+For each failing FR:
+1. Read the spec at specs/$short_name/spec.md to understand the full requirement
+2. Read the tasks at specs/$short_name/tasks.md to find which task(s) cover this FR
+3. Implement the missing functionality
+4. Write tests for the new code
+5. Run tests to verify
+6. Commit your changes
+
+Only fix the FRs listed above. Do not modify unrelated code.
+EOF
+}
+
 # ─── Phase: Conflict Resolution (rebase conflicts) ──────────────────────────
 
 prompt_conflict_resolve() {

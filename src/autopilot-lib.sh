@@ -291,6 +291,8 @@ detect_state() {
         # All tasks done or deferred — check if already merged
         if is_epic_merged "$repo_root" "$short_name"; then
             echo "done"
+        elif ! grep -q '<!-- REQUIREMENTS_VERIFIED -->' "$spec_dir/tasks.md" 2>/dev/null; then
+            echo "verify-requirements"
         elif ! grep -q '<!-- SECURITY_REVIEWED -->' "$spec_dir/tasks.md" 2>/dev/null; then
             echo "security-review"
         elif ! grep -q '<!-- VERIFY_CI_COMPLETE -->' "$spec_dir/tasks.md" 2>/dev/null; then
