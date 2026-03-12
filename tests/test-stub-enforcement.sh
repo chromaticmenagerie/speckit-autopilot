@@ -131,6 +131,71 @@ ENVEOF
 ) 2>/dev/null )
 assert_eq "off" "$_val" "preserves 'off' from project.env"
 
+# ─── Prompt conditional tests ────────────────────────────────────────────────
+
+assert_contains() {
+    local haystack="$1" needle="$2" msg="${3:-}"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$haystack" == *"$needle"* ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "  ✓ $msg"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "  ✗ $msg: '$needle' not found in output"
+    fi
+}
+
+assert_not_contains() {
+    local haystack="$1" needle="$2" msg="${3:-}"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$haystack" != *"$needle"* ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "  ✓ $msg"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "  ✗ $msg: '$needle' should NOT appear in output"
+    fi
+}
+
+# Stubs for prompt dependencies
+log() { :; }
+_preamble() { echo "PREAMBLE"; }
+MERGE_TARGET="main"
+BASE_BRANCH="main"
+LAST_MERGE_SHA="abc123"
+PROJECT_TEST_CMD=""
+PROJECT_LINT_CMD=""
+PROJECT_WORK_DIR=""
+HAS_FRONTEND="false"
+
+source "$SRC_DIR/autopilot-prompts.sh"
+
+TSKIP_NEEDLE="t.Skip() are CRITICAL"
+
+# Test 7: prompt_review omits t.Skip line when STUB_ENFORCEMENT_LEVEL unset
+echo "Test 7: prompt_review omits t.Skip CRITICAL when STUB_ENFORCEMENT_LEVEL unset"
+unset STUB_ENFORCEMENT_LEVEL 2>/dev/null || true
+output="$(prompt_review "001" "test epic" "/tmp/repo" "feat")"
+assert_not_contains "$output" "$TSKIP_NEEDLE" "t.Skip line omitted when unset"
+
+# Test 8: prompt_review omits t.Skip line when STUB_ENFORCEMENT_LEVEL=warn
+echo "Test 8: prompt_review omits t.Skip CRITICAL when STUB_ENFORCEMENT_LEVEL=warn"
+STUB_ENFORCEMENT_LEVEL="warn"
+output="$(prompt_review "001" "test epic" "/tmp/repo" "feat")"
+assert_not_contains "$output" "$TSKIP_NEEDLE" "t.Skip line omitted when warn"
+
+# Test 9: prompt_review includes t.Skip line when STUB_ENFORCEMENT_LEVEL=error
+echo "Test 9: prompt_review includes t.Skip CRITICAL when STUB_ENFORCEMENT_LEVEL=error"
+STUB_ENFORCEMENT_LEVEL="error"
+output="$(prompt_review "001" "test epic" "/tmp/repo" "feat")"
+assert_contains "$output" "$TSKIP_NEEDLE" "t.Skip line included when error"
+
+# Test 10: prompt_review omits t.Skip line when STUB_ENFORCEMENT_LEVEL=off
+echo "Test 10: prompt_review omits t.Skip CRITICAL when STUB_ENFORCEMENT_LEVEL=off"
+STUB_ENFORCEMENT_LEVEL="off"
+output="$(prompt_review "001" "test epic" "/tmp/repo" "feat")"
+assert_not_contains "$output" "$TSKIP_NEEDLE" "t.Skip line omitted when off"
+
 # ─── Results ────────────────────────────────────────────────────────────────
 
 echo ""
