@@ -35,6 +35,7 @@ CLAUDE_SELF_REVIEW_MAX_ROUNDS=2
 CODEX_MAX_DIFF_BYTES=800000
 CODEX_REVIEW_TIMEOUT=300
 CRYSTALLIZE_MAX_DIFF_CHARS=50000
+STUB_ENFORCEMENT_LEVEL="warn"
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -569,6 +570,8 @@ load_project_config() {
     HAS_CODEX="${HAS_CODEX:-false}"
     HAS_REMOTE="${HAS_REMOTE:-false}"
     HAS_GH_CLI="${HAS_GH_CLI:-false}"
+    PROJECT_LANG="${PROJECT_LANG:-unknown}"
+    STUB_ENFORCEMENT_LEVEL="${STUB_ENFORCEMENT_LEVEL:-warn}"
 
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."

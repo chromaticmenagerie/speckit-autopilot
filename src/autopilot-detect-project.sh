@@ -440,6 +440,12 @@ CONVERGENCE_STALL_ROUNDS=2
 
 # Merge strategy for epic branches: "merge" (default, --no-ff merge commit) or "squash" (one commit per epic).
 MERGE_STRATEGY="merge"
+
+# Detected project language (used by crystallize for module map extraction).
+PROJECT_LANG="$detected"
+
+# Stub enforcement level: error (hard-fail) | warn (log only) | off (skip detection).
+STUB_ENFORCEMENT_LEVEL="warn"
 EOF
 
 _ensure_gitignore_logs "$REPO_ROOT"

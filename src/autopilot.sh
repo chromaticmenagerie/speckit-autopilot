@@ -353,6 +353,39 @@ ${diff_full: -$max_diff}"
             printf '%s\n\n' "FULL DIFF:" >> "$diff_file"
             printf '%s' "$diff_full" >> "$diff_file"
 
+            # Module map extraction (grounded source of truth for crystallize)
+            local grep_output=""
+            case "${PROJECT_LANG:-unknown}" in
+                Go)
+                    grep_output=$(grep -rnE '^func\s+(\([^)]+\)\s+)?[A-Z]\w*\(' "$repo_root" \
+                        --include='*.go' --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=node_modules --exclude-dir=third_party \
+                        --exclude='*_test.go' 2>/dev/null | head -200 || true)
+                    ;;
+                Node/JS/TS|Node-Monorepo)
+                    grep_output=$(grep -rnE '^export\s+(async\s+)?(function|const|class|interface|type|enum)' "$repo_root" \
+                        --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+                        --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules \
+                        --exclude-dir=dist --exclude='*.test.*' --exclude='*.spec.*' 2>/dev/null | head -200 || true)
+                    ;;
+                Python)
+                    grep_output=$(grep -rnE '^(def|class) ' "$repo_root" \
+                        --include='*.py' --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=node_modules --exclude-dir=__pycache__ \
+                        --exclude='test_*' --exclude='*_test.py' 2>/dev/null | head -200 || true)
+                    ;;
+                Rust)
+                    grep_output=$(grep -rnE '^\s*pub\s+(fn|struct|enum|trait)' "$repo_root" \
+                        --include='*.rs' --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=target 2>/dev/null | head -200 || true)
+                    ;;
+            esac
+
+            if [[ -n "$grep_output" ]]; then
+                printf '\n\n%s\n' "SOURCE MODULE MAP (pre-computed from actual source files):" >> "$diff_file"
+                printf '%s\n' "$grep_output" >> "$diff_file"
+            fi
+
             prompt="$(prompt_crystallize "$epic_num" "$title" "$repo_root" "$short_name" "$diff_file")"
             rm -f "$diff_file"
             ;;
