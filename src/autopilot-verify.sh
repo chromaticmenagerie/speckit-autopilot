@@ -39,22 +39,63 @@ verify_tests() {
         return 1
     fi
 
-    # Detect t.Skip() / t.Skipf() / t.SkipNow() stubs in test files
+    # Detect unconditional test stubs/skips (multi-language)
     if [[ "$enforcement" != "off" ]]; then
         local skip_files=""
-        skip_files=$(grep -rlE 't\.Skip(f|Now)?\(' "$repo_root/$PROJECT_WORK_DIR" --include='*_test.go' --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=third_party 2>/dev/null || true)
+        case "${PROJECT_LANG:-unknown}" in
+            Go)
+                skip_files=$(find "$repo_root" -name '*_test.go' \
+                    -not -path '*/vendor/*' -not -path '*/.git/*' \
+                    -not -path '*/node_modules/*' -not -path '*/third_party/*' \
+                    -exec awk '
+/^func Test[A-Za-z0-9_]*\(/ { in_test=1; found_first=0; next }
+in_test && /^}/ { in_test=0; next }
+in_test && !found_first && /^\t[^\t ]/ {
+    found_first=1
+    if (/^\tt\.(Skip|Skipf|SkipNow)\(/) {
+        print FILENAME ":" NR ": " $0
+    }
+}
+' {} + 2>/dev/null || true)
+                ;;
+            Python)
+                skip_files=$(grep -rlE '@pytest\.mark\.skip\b' "$repo_root" \
+                    --include='test_*.py' --include='*_test.py' \
+                    --exclude-dir=vendor --exclude-dir=.git \
+                    --exclude-dir=node_modules --exclude-dir=__pycache__ \
+                    --exclude-dir=third_party 2>/dev/null || true)
+                ;;
+            Node/JS/TS|Node-Monorepo)
+                skip_files=$(grep -rlE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' "$repo_root" \
+                    --include='*.test.ts' --include='*.test.js' --include='*.test.tsx' \
+                    --include='*.test.jsx' --include='*.spec.ts' --include='*.spec.js' \
+                    --exclude-dir=vendor --exclude-dir=.git \
+                    --exclude-dir=node_modules --exclude-dir=dist \
+                    --exclude-dir=third_party 2>/dev/null || true)
+                ;;
+            Rust)
+                skip_files=$(grep -rlE '#\[ignore\]' "$repo_root" \
+                    --include='*.rs' \
+                    --exclude-dir=vendor --exclude-dir=.git \
+                    --exclude-dir=target --exclude-dir=third_party 2>/dev/null || true)
+                ;;
+            *)
+                # Unknown/Makefile — skip stub detection (no reliable pattern)
+                skip_files=""
+                ;;
+        esac
         if [[ -n "$skip_files" ]]; then
             local skip_count
             skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
             if [[ "$enforcement" == "error" ]]; then
-                log ERROR "Found $skip_count test file(s) with t.Skip() stubs:"
+                log ERROR "Found $skip_count test file(s) with skip/stub markers:"
                 echo "$skip_files" | while read -r f; do
                     log ERROR "  - $f"
                 done
                 return 1
             else
                 # enforcement == warn
-                log WARN "Found $skip_count test file(s) with t.Skip() stubs (enforcement=warn):"
+                log WARN "Found $skip_count test file(s) with skip/stub markers (enforcement=warn):"
                 echo "$skip_files" | while read -r f; do
                     log WARN "  - $f"
                 done

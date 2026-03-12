@@ -58,30 +58,19 @@ log() {
     LOG_OUTPUT+="[$1] ${*:2}"$'\n'
 }
 
-# Source verify_tests from autopilot-verify.sh
+# Source verify_tests (whole file — awk inlines break eval+sed extraction)
 VERIFY_SRC="$SRC_DIR/autopilot-verify.sh"
+source "$VERIFY_SRC"
 
-if grep -q "^verify_tests()" "$VERIFY_SRC" 2>/dev/null; then
-    eval "$(sed -n '/^verify_tests()/,/^}/p' "$VERIFY_SRC")"
-else
-    echo "FATAL: verify_tests() not found in $VERIFY_SRC"
-    verify_tests() { return 99; }
-fi
+# Set language for multi-lang detection
+PROJECT_LANG="Go"
 
 # Create a repo dir with a Go test file containing t.Skip()
 repo="$TMPDIR_ROOT/repo"
 mkdir -p "$repo"
 
-# Minimal test file with t.Skip() stub
-cat > "$repo/handler_test.go" <<'GOEOF'
-package main
-
-import "testing"
-
-func TestHandler(t *testing.T) {
-    t.Skip("not implemented yet")
-}
-GOEOF
+# Minimal test file with t.Skip() stub (must use real tabs for awk detection)
+printf 'package main\n\nimport "testing"\n\nfunc TestHandler(t *testing.T) {\n\tt.Skip("not implemented yet")\n}\n' > "$repo/handler_test.go"
 
 # ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -99,7 +88,7 @@ rc=0
 verify_tests "$repo" "error" || rc=$?
 assert_eq "1" "$rc" "returns 1 with enforcement=error"
 assert_contains "$LOG_OUTPUT" "ERROR" "logs ERROR for stubs"
-assert_contains "$LOG_OUTPUT" "t.Skip()" "mentions t.Skip() in log"
+assert_contains "$LOG_OUTPUT" "skip/stub markers" "mentions skip/stub in log"
 
 # ─── Test 2: enforcement=warn logs stubs but returns 0 ──────────────────────
 
@@ -113,7 +102,7 @@ rc=0
 verify_tests "$repo" "warn" || rc=$?
 assert_eq "0" "$rc" "returns 0 with enforcement=warn"
 assert_contains "$LOG_OUTPUT" "WARN" "logs WARN for stubs"
-assert_contains "$LOG_OUTPUT" "t.Skip()" "mentions t.Skip() in warn log"
+assert_contains "$LOG_OUTPUT" "skip/stub markers" "mentions skip/stub in warn log"
 
 # ─── Test 3: enforcement=off skips stub detection entirely ───────────────────
 
@@ -126,7 +115,7 @@ LAST_TEST_OUTPUT=""
 rc=0
 verify_tests "$repo" "off" || rc=$?
 assert_eq "0" "$rc" "returns 0 with enforcement=off"
-assert_not_contains "$LOG_OUTPUT" "t.Skip()" "no t.Skip() mention with off"
+assert_not_contains "$LOG_OUTPUT" "skip/stub markers" "no skip/stub mention with off"
 assert_contains "$LOG_OUTPUT" "Tests pass" "logs Tests pass"
 
 # ─── Test 4: no second arg defaults to warn behavior ────────────────────────
