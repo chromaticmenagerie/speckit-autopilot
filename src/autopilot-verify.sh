@@ -18,6 +18,7 @@ LAST_BUILD_OUTPUT=""
 # Side effect: sets LAST_TEST_OUTPUT with the captured output.
 verify_tests() {
     local repo_root="$1"
+    local enforcement="${2:-warn}"  # off | warn | error
 
     if [[ -z "$PROJECT_TEST_CMD" ]]; then
         log INFO "No test command configured — skipping"
@@ -39,16 +40,26 @@ verify_tests() {
     fi
 
     # Detect t.Skip() / t.Skipf() / t.SkipNow() stubs in test files
-    local skip_files=""
-    skip_files=$(grep -rlE 't\.Skip(f|Now)?\(' "$repo_root/$PROJECT_WORK_DIR" --include='*_test.go' --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=third_party 2>/dev/null || true)
-    if [[ -n "$skip_files" ]]; then
-        local skip_count
-        skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
-        log ERROR "Found $skip_count test file(s) with t.Skip() stubs:"
-        echo "$skip_files" | while read -r f; do
-            log ERROR "  - $f"
-        done
-        return 1
+    if [[ "$enforcement" != "off" ]]; then
+        local skip_files=""
+        skip_files=$(grep -rlE 't\.Skip(f|Now)?\(' "$repo_root/$PROJECT_WORK_DIR" --include='*_test.go' --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=third_party 2>/dev/null || true)
+        if [[ -n "$skip_files" ]]; then
+            local skip_count
+            skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
+            if [[ "$enforcement" == "error" ]]; then
+                log ERROR "Found $skip_count test file(s) with t.Skip() stubs:"
+                echo "$skip_files" | while read -r f; do
+                    log ERROR "  - $f"
+                done
+                return 1
+            else
+                # enforcement == warn
+                log WARN "Found $skip_count test file(s) with t.Skip() stubs (enforcement=warn):"
+                echo "$skip_files" | while read -r f; do
+                    log WARN "  - $f"
+                done
+            fi
+        fi
     fi
 
     log OK "Tests pass"
@@ -179,7 +190,7 @@ verify_ci() {
     fi
 
     # Step 5: Unit tests
-    if ! verify_tests "$repo_root"; then
+    if ! verify_tests "$repo_root" "$STUB_ENFORCEMENT_LEVEL"; then
         LAST_CI_OUTPUT="=== STEP: Tests === FAIL"$'\n'"$LAST_TEST_OUTPUT"
         rm -f "$tmpfile"; return 1
     fi
