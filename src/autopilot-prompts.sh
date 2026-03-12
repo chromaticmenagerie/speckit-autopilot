@@ -609,7 +609,10 @@ All implementation tasks are complete. Perform a senior code review.
    - Observability (structured logging per constitution principles)
    - No hardcoded paths or credentials
    - No print() / console.log debug output (use proper logging)
+$(if [[ "${STUB_ENFORCEMENT_LEVEL:-warn}" == "error" ]]; then cat <<'STUB'
    - Integration tests containing t.Skip() are CRITICAL findings. These are stubs that must be implemented, not dismissed. Report each skipped test file as a separate CRITICAL issue.
+STUB
+fi)
    - Design fidelity (if specs/${short_name}/design-context.md exists):
      * Theme config file exists mapping ALL design tokens to CSS variables or Tailwind theme
      * Design token audit: spot-check 3-5 component/page files for raw hex color values
@@ -628,18 +631,41 @@ $(if [[ "${HAS_FRONTEND:-false}" == "true" ]]; then cat <<'A11Y'
      * Form inputs have associated labels
 A11Y
 fi)
+   - Among files changed in this epic (see git diff --name-only above), check for
+     exported functions/methods with zero callers outside test files.
+     For exported functions with no callers in the diff, use Grep to search the
+     FULL project for callers before reporting. Only report as MEDIUM dead code
+     if zero callers found project-wide.
+     Do NOT report as dead code: init() functions, interface method implementations,
+     HTTP/RPC handler functions registered via mux/router, or functions referenced
+     in generated code.
+     Report each confirmed case as:
+     MEDIUM: Dead code: file:line — functionName() has no callers in non-test code
 
-3. Fix any issues found. Commit fixes:
-   git add <specific files>
+3. Write a file \`review-findings.md\` in the spec directory (specs/${short_name}/) with your findings, using these sections:
+
+   ## Spec Compliance (P1)
+   [FR coverage findings — which FRs are fully implemented, partially, or missing]
+
+   ## Dead Code
+   [Dead code findings with MEDIUM severity, or "None found" if clean]
+
+   ## Issues Found
+   [Other review findings, or "None found" if clean]
+
+   Commit this file alongside any fixes you make.
+
+4. Fix any issues found. Commit fixes:
+   git add specs/${short_name}/review-findings.md <other specific files>
    git commit -m "fix(${epic_num}): code review — <what was fixed>"
 
-4. Final validation:
+5. Final validation:
 $(if [[ -n "$PROJECT_TEST_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_TEST_CMD}"; fi)
 $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_DIR} && ${PROJECT_LINT_CMD}"; fi)
 
-5. If any issues remain, fix and commit again.
+6. If any issues remain, fix and commit again.
 
-6. Verify clean working tree:
+7. Verify clean working tree:
    git status
    If uncommitted changes remain, commit them with specific file staging:
    git add <specific files touched by review fixes>
@@ -648,7 +674,7 @@ $(if [[ -n "$PROJECT_LINT_CMD" ]]; then echo "   cd ${repo_root}/${PROJECT_WORK_
    Verify: git status shows a CLEAN working tree.
    Prefer staging specific files over bulk operations.
 
-7. Report a structured review summary (this will be captured as the review audit trail):
+8. Report a structured review summary (this will be captured as the review audit trail):
 
    ## Review Summary
    - **Files reviewed**: <count>
