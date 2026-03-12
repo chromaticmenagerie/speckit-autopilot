@@ -113,7 +113,7 @@ mkdir -p "Design/Pencil Files"
 DEST=".specify/scripts/bash"
 mkdir -p "$DEST"
 
-for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-review.sh autopilot-review-helpers.sh autopilot-merge.sh autopilot-design.sh autopilot-finalize.sh autopilot-verify.sh autopilot-watch.sh autopilot-validate.sh common.sh codex-review-schema.json; do
+for script in autopilot.sh autopilot-lib.sh autopilot-stream.sh autopilot-prompts.sh autopilot-detect-project.sh autopilot-github.sh autopilot-github-sync.sh autopilot-review.sh autopilot-review-helpers.sh autopilot-merge.sh autopilot-design.sh autopilot-finalize.sh autopilot-verify.sh autopilot-requirements.sh autopilot-watch.sh autopilot-validate.sh common.sh codex-review-schema.json; do
     if [[ -f "$SRC_DIR/src/$script" ]]; then
         cp "$SRC_DIR/src/$script" "$DEST/$script"
         chmod +x "$DEST/$script"

@@ -194,7 +194,7 @@ parse_args() {
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 echo "  --allow-security-skip  Force-advance past unresolved security findings"
                 echo "  --allow-requirements-skip  Force-advance past unresolved requirements gaps"
-                echo "  --max-iterations N   Override iteration safety limit (default: 30)"
+                echo "  --max-iterations N   Override iteration safety limit (default: 40)"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
