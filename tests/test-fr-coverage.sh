@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# test-fr-coverage.sh — Verify check_fr_coverage() detects FR-to-task gaps
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$SCRIPT_DIR/../src"
+
+# ─── Test Framework ─────────────────────────────────────────────────────────
+
+TESTS_RUN=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+assert_eq() {
+    local expected="$1" actual="$2" msg="${3:-}"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$expected" == "$actual" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "  ✓ $msg"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "  ✗ $msg: expected '$expected', got '$actual'"
+    fi
+}
+
+assert_contains() {
+    local haystack="$1" needle="$2" msg="${3:-}"
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$haystack" == *"$needle"* ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo "  ✓ $msg"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo "  ✗ $msg: '$haystack' does not contain '$needle'"
+    fi
+}
+
+# ─── Setup ──────────────────────────────────────────────────────────────────
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# Source the library
+AUTOPILOT_LOG=""
+BASE_BRANCH="master"
+source "$SRC_DIR/autopilot-lib.sh"
+
+# Stub functions not needed for these tests
+find_pen_file() { echo ""; }
+is_epic_merged() { return 1; }
+
+# ─── Test: all FRs covered → returns 0 ──────────────────────────────────────
+
+echo "Test: all FRs covered returns 0"
+
+spec_dir="$TMPDIR/all-covered"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/spec.md" <<'EOF'
+# Feature Spec
+**FR-001** User login
+**FR-002** User logout
+**FR-003** Password reset
+EOF
+
+cat > "$spec_dir/tasks.md" <<'EOF'
+## Phase 1
+- [ ] Implement FR-001 login form
+- [ ] Implement FR-002 logout button
+- [ ] Implement FR-003 password reset flow
+EOF
+
+rc=0
+stderr_out=$(check_fr_coverage "$spec_dir" 2>&1) || rc=$?
+assert_eq "0" "$rc" "returns 0 when all FRs covered"
+assert_contains "$stderr_out" "All FRs" "logs success message"
+
+# ─── Test: missing FRs → returns 1 and logs them ────────────────────────────
+
+echo "Test: missing FRs returns 1 and logs missing identifiers"
+
+spec_dir="$TMPDIR/missing-frs"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/spec.md" <<'EOF'
+# Feature Spec
+**FR-001** User login
+**FR-002** User logout
+**FR-003** Password reset
+**FR-004** Two-factor auth
+EOF
+
+cat > "$spec_dir/tasks.md" <<'EOF'
+## Phase 1
+- [ ] Implement FR-001 login form
+- [ ] Implement FR-003 password reset flow
+EOF
+
+rc=0
+stderr_out=$(check_fr_coverage "$spec_dir" 2>&1) || rc=$?
+assert_eq "1" "$rc" "returns 1 when FRs missing"
+assert_contains "$stderr_out" "FR-002" "logs FR-002 as missing"
+assert_contains "$stderr_out" "FR-004" "logs FR-004 as missing"
+
+# ─── Test: no FRs in spec.md → returns 0 (skip) ─────────────────────────────
+
+echo "Test: no FRs in spec.md returns 0 (skip check)"
+
+spec_dir="$TMPDIR/no-frs"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/spec.md" <<'EOF'
+# Feature Spec
+This spec has no formal FR identifiers.
+EOF
+
+cat > "$spec_dir/tasks.md" <<'EOF'
+## Phase 1
+- [ ] Do something
+EOF
+
+rc=0
+check_fr_coverage "$spec_dir" 2>/dev/null || rc=$?
+assert_eq "0" "$rc" "returns 0 when no FRs in spec"
+
+# ─── Test: no spec.md → returns 0 (skip) ────────────────────────────────────
+
+echo "Test: no spec.md returns 0 (skip check)"
+
+spec_dir="$TMPDIR/no-spec"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/tasks.md" <<'EOF'
+## Phase 1
+- [ ] Do something
+EOF
+
+rc=0
+check_fr_coverage "$spec_dir" 2>/dev/null || rc=$?
+assert_eq "0" "$rc" "returns 0 when spec.md missing"
+
+# ─── Test: no tasks.md → returns 0 (skip) ───────────────────────────────────
+
+echo "Test: no tasks.md returns 0 (skip check)"
+
+spec_dir="$TMPDIR/no-tasks"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/spec.md" <<'EOF'
+# Feature Spec
+**FR-001** Something
+EOF
+
+rc=0
+check_fr_coverage "$spec_dir" 2>/dev/null || rc=$?
+assert_eq "0" "$rc" "returns 0 when tasks.md missing"
+
+# ─── Test: duplicate FRs in spec only counted once ──────────────────────────
+
+echo "Test: duplicate FRs in spec counted once"
+
+spec_dir="$TMPDIR/dup-frs"
+mkdir -p "$spec_dir"
+
+cat > "$spec_dir/spec.md" <<'EOF'
+# Feature Spec
+**FR-001** User login
+**FR-001** User login (repeated)
+**FR-002** User logout
+EOF
+
+cat > "$spec_dir/tasks.md" <<'EOF'
+## Phase 1
+- [ ] Implement FR-001 login form
+- [ ] Implement FR-002 logout button
+EOF
+
+rc=0
+check_fr_coverage "$spec_dir" 2>/dev/null || rc=$?
+assert_eq "0" "$rc" "returns 0 with duplicate FRs all covered"
+
+# ─── Summary ────────────────────────────────────────────────────────────────
+
+echo ""
+echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"
+[[ $TESTS_FAILED -eq 0 ]] || exit 1

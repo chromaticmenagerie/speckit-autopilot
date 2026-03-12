@@ -906,6 +906,11 @@ run_epic() {
             return 0
         fi
 
+        # FR coverage check: warn (non-blocking) on transition to implement
+        if [[ "$state" == "implement" ]] && [[ -n "$short_name" ]]; then
+            check_fr_coverage "$repo_root/specs/$short_name" || true
+        fi
+
         if [[ "$state" == "security-review" ]]; then
             if ! _run_security_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
                 log ERROR "Security gate halted pipeline — re-run with --allow-security-skip to force-advance"

@@ -698,6 +698,44 @@ reviews:
 CODERABBIT_EOF
 }
 
+# ─── FR Coverage Check ───────────────────────────────────────────────────────
+
+# Check FR coverage: verify all FRs in spec.md have task references.
+# Args: $1 = spec_dir (path to spec directory containing spec.md and tasks.md)
+# Returns: 0 if all FRs covered, 1 if gaps found (logs missing FRs)
+check_fr_coverage() {
+    local spec_dir="$1"
+    local spec_file="$spec_dir/spec.md"
+    local tasks_file="$spec_dir/tasks.md"
+
+    [[ -f "$spec_file" ]] || return 0
+    [[ -f "$tasks_file" ]] || return 0
+
+    # Extract FR-NNN identifiers from spec.md (bold format: **FR-NNN**)
+    local spec_frs
+    spec_frs=$(grep -oE '\*\*FR-[0-9]{3}\*\*' "$spec_file" | sed 's/\*//g' | sort -u)
+    [[ -z "$spec_frs" ]] && return 0  # No FRs found — skip check
+
+    # Extract FR-NNN references from tasks.md
+    local task_frs
+    task_frs=$(grep -oE 'FR-[0-9]{3}' "$tasks_file" | sort -u)
+
+    # Find FRs in spec but not in tasks
+    local missing
+    missing=$(comm -23 <(echo "$spec_frs") <(echo "$task_frs"))
+
+    if [[ -n "$missing" ]]; then
+        log WARN "FR coverage gap — these FRs have no task references:"
+        echo "$missing" | while read -r fr; do
+            log WARN "  - $fr"
+        done
+        return 1
+    fi
+
+    log OK "All FRs in spec.md have task references"
+    return 0
+}
+
 # ─── Verification ───────────────────────────────────────────────────────────
 
 source "${SCRIPT_DIR}/autopilot-verify.sh"
