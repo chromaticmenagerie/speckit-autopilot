@@ -429,6 +429,11 @@ in each subagent prompt:
   rules. Reference design tokens via CSS variables or Tailwind classes —
   never hardcode hex color values in component or page files."
 
+Before marking a task [x], list each concrete deliverable in the task
+description and verify each one separately. If the task says "A AND B",
+verify A exists in code, then verify B exists in code. Only mark [x] if
+ALL deliverables are confirmed.
+
 Then invoke the Skill tool:
   skill = "speckit.implement"
   args  = "all tasks using subagents for parallel [P] tasks — IMPORTANT: tasks marked - [-] are deferred and MUST be skipped entirely, do not attempt to implement them"
@@ -775,6 +780,18 @@ architectural understanding.
         - What are the key entities and their lifecycle states? (state machines, ER diagrams)
         - Where would new functionality be added? (extension points, patterns)
       Keep the file under 120 lines total. Include a brief "Extension Points" prose section.
+
+$(if grep -q 'SOURCE MODULE MAP' "$diff_file" 2>/dev/null; then cat <<'GROUNDING'
+IMPORTANT — Ground the module map in actual source code:
+The diff file includes a SOURCE MODULE MAP section pre-computed from actual
+source files. This is your ONLY source of truth for function signatures.
+- ONLY include functions that appear in the SOURCE MODULE MAP section
+- If a signature is truncated, read that file at the line number shown
+- Group results by file path; omit files with no exported functions
+- Use exact names from source — never paraphrase or rename
+- If a function appeared in the diff but is NOT in the SOURCE MODULE MAP, it was deleted
+GROUNDING
+fi)
 
 4. Commit all changes:
    git add CLAUDE.md .specify/memory/architecture.md
