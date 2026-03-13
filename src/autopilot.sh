@@ -160,8 +160,9 @@ STRICT_DEPS=false
 ALLOW_DEFERRED="${ALLOW_DEFERRED:-true}"
 SKIP_CODERABBIT=false
 SKIP_REVIEW=false
-SECURITY_FORCE_SKIP_ALLOWED=false
-REQUIREMENTS_FORCE_SKIP_ALLOWED=false
+STRICT_MODE=false
+SECURITY_FORCE_SKIP_ALLOWED="${SECURITY_FORCE_SKIP_ALLOWED:-true}"
+REQUIREMENTS_FORCE_SKIP_ALLOWED="${REQUIREMENTS_FORCE_SKIP_ALLOWED:-true}"
 FORCE_SKIP_CASCADE_LIMIT="${FORCE_SKIP_CASCADE_LIMIT:-3}"
 MAX_ITERATIONS=""   # CLI override for iteration safety limit
 
@@ -187,9 +188,16 @@ parse_args() {
                 PHASE_MAX_RETRIES[analyze]=1
                 ;;
             --strict-deps)      STRICT_DEPS=true ;;
-            --allow-deferred)   ALLOW_DEFERRED=true ;;
-            --allow-security-skip)  SECURITY_FORCE_SKIP_ALLOWED=true ;;
-            --allow-requirements-skip)  REQUIREMENTS_FORCE_SKIP_ALLOWED=true ;;
+            --strict)           STRICT_MODE=true ;;
+            --allow-deferred)
+                log WARN "--allow-deferred is deprecated (deferral now allowed by default). Use --strict to prevent. Will be removed in v0.11.0."
+                ;;
+            --allow-security-skip)
+                log WARN "--allow-security-skip is deprecated (gates now advance by default). Use --strict to halt. Will be removed in v0.11.0."
+                ;;
+            --allow-requirements-skip)
+                log WARN "--allow-requirements-skip is deprecated (gates now advance by default). Use --strict to halt. Will be removed in v0.11.0."
+                ;;
             --allow-cascade) FORCE_SKIP_CASCADE_LIMIT=99 ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --max-iterations)
@@ -217,13 +225,16 @@ parse_args() {
                 echo "  --fast          Reduce convergence phases to 1 attempt (faster iteration)"
                 echo "  --no-github          Disable GitHub Projects sync"
                 echo "  --github-resync      Resync all epics to GitHub Projects and exit"
+                echo "  --strict             Halt on all gate failures (disable auto-advance)"
                 echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
-                echo "  --allow-deferred     Defer stuck implement tasks instead of stopping"
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
-                echo "  --allow-security-skip  Force-advance past unresolved security findings"
-                echo "  --allow-requirements-skip  Force-advance past unresolved requirements gaps"
                 echo "  --allow-cascade      Raise cascade circuit-breaker limit to 99 (allow many gate skips)"
                 echo "  --max-iterations N   Override iteration safety limit (default: 40)"
+                echo ""
+                echo "Deprecated (no-ops, gates now advance by default; use --strict to halt):"
+                echo "  --allow-deferred"
+                echo "  --allow-security-skip"
+                echo "  --allow-requirements-skip"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
@@ -1067,6 +1078,19 @@ main() {
 
     # CLI args parsed AFTER project config so flags override project.env
     parse_args "$@"
+
+    # Strict mode: override all permissive defaults
+    if [[ "${STRICT_MODE:-false}" == "true" ]]; then
+        ALLOW_DEFERRED=false
+        FORCE_ADVANCE_ON_REVIEW_STALL=false
+        FORCE_ADVANCE_ON_DIMINISHING_RETURNS=false
+        FORCE_ADVANCE_ON_REVIEW_ERROR=false
+        SECURITY_FORCE_SKIP_ALLOWED=false
+        REQUIREMENTS_FORCE_SKIP_ALLOWED=false
+        CI_FORCE_SKIP_ALLOWED=false
+        FORCE_SKIP_CASCADE_LIMIT=0
+        log INFO "Strict mode: all gates will halt on failure"
+    fi
 
     # Preflight: verify project tools are available
     verify_preflight_tools "$repo_root" || exit 1

@@ -417,20 +417,8 @@ HAS_GH_CLI="$HAS_GH_CLI"
 # Frontend framework detected (auto-detected).
 HAS_FRONTEND="$HAS_FRONTEND"
 
-# Force-advance past CodeRabbit CLI review stalls (same issue count for N rounds).
-# Default: "false" (halt on stalls). Set to "true" to force-advance past stalls.
-FORCE_ADVANCE_ON_REVIEW_STALL="false"
-
-# Force-advance when review improvements diminish (issue count drops but not to zero).
-# Default: "false" (halt on diminishing returns). Set to "true" to force-advance.
-FORCE_ADVANCE_ON_DIMINISHING_RETURNS="false"
-
-# Force-advance past CodeRabbit CLI review errors (issues remain after max rounds).
-# Default: "false" (halt on errors). Set to "true" to force-advance past errors.
-FORCE_ADVANCE_ON_REVIEW_ERROR="false"
-
-# Deprecated: use FORCE_ADVANCE_ON_REVIEW_STALL, FORCE_ADVANCE_ON_DIMINISHING_RETURNS, and FORCE_ADVANCE_ON_REVIEW_ERROR above.
-# FORCE_ADVANCE_ON_REVIEW_FAIL="true"
+# All gate variables default to true (auto-advance). Use --strict to halt on failures.
+# DIMINISHING_RETURNS_THRESHOLD=3
 
 # Preflight tools required by this project (space-separated).
 PROJECT_PREFLIGHT_TOOLS="$PREFLIGHT_TOOLS"
