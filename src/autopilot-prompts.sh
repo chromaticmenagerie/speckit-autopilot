@@ -765,6 +765,27 @@ PROHIBITED test file changes:
 7. Commit:
    git add <specific files>
    git commit -m "fix(${epic_num}): resolve CI failures (round ${round})"
+
+### Secret Scanning (Gitleaks)
+If secret scanning (gitleaks) reported findings:
+- Gitleaks output is JSON: each finding has RuleID, File, StartLine, Secret (redacted), Match, Fingerprint.
+- For provider-specific secrets (AWS keys, GitHub tokens, Stripe keys, private keys, etc.):
+  - If the value is a KNOWN EXAMPLE/PLACEHOLDER (e.g., AWS-documented
+    AKIAIOSFODNN7EXAMPLE, clearly fake values like sk_live_000000000000,
+    or values in test fixtures with obvious placeholder patterns):
+    Add \`# gitleaks:allow\` inline with a justification comment, e.g.:
+    \`AKIAIOSFODNN7EXAMPLE  # gitleaks:allow — AWS documented example key\`
+  - If the value appears to be REAL: do NOT allowlist — remove from code,
+    flag for rotation, and halt.
+- For each non-provider finding, suppress the false positive using this
+  preference order:
+  1. PREFERRED: Add a regex pattern to .gitleaks.toml [[allowlists]] section
+     (path regex for entire directories, or content regex for specific patterns).
+  2. GOOD: Add a \`# gitleaks:allow\` inline comment on the flagged line.
+  3. LAST RESORT: Add the Fingerprint to .gitleaksignore (one per line, with
+     justification comment above).
+- After fixing, ensure ALL modified/created config files are staged:
+  git add .gitleaks.toml .gitleaksignore <other specific files>
 EOF
 }
 

@@ -270,6 +270,11 @@ _run_verify_ci_gate() {
         (cd "$repo_root" && git add "$tasks_file" && \
          git commit -m "$commit_msg" 2>/dev/null || true)
     else
+        # Tier 1 secrets override force-skip — always halt
+        if [[ "${LAST_SECRET_SCAN_TIER:-0}" -eq 1 ]]; then
+            log ERROR "Tier 1 provider secret detected — cannot force-skip. Rotate the secret and remove from git history."
+            return 1
+        fi
         if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
             echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
             echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"

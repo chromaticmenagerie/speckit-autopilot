@@ -183,6 +183,13 @@ command -v codex &>/dev/null && HAS_CODEX="true"
 detect_remote && HAS_REMOTE="true"
 detect_gh_cli && HAS_GH_CLI="true"
 
+# Secret scanning
+PROJECT_SECRET_SCAN_CMD=""
+detect_gitleaks
+if [[ -n "$PROJECT_SECRET_SCAN_CMD" ]]; then
+    _generate_gitleaks_config "$REPO_ROOT"
+fi
+
 HAS_FRONTEND="false"
 if find "$REPO_ROOT" -maxdepth 4 \( -name '*.svelte' -o -name '*.jsx' -o -name '*.tsx' -o -name '*.vue' \) 2>/dev/null | grep -q .; then
     HAS_FRONTEND="true"
@@ -266,6 +273,12 @@ HAS_GH_CLI="$HAS_GH_CLI"
 # Frontend framework detected (auto-detected).
 HAS_FRONTEND="$HAS_FRONTEND"
 
+
+# Secret scanning (opt-in; requires gitleaks in PATH)
+PROJECT_SECRET_SCAN_CMD="$PROJECT_SECRET_SCAN_CMD"
+PROJECT_SECRET_TIER1_RULES=""
+PROJECT_SECRET_SCAN_MODE="branch"
+
 # All gate variables default to true (auto-advance). Use --strict to halt on failures.
 # DIMINISHING_RETURNS_THRESHOLD=3
 
@@ -308,6 +321,7 @@ echo "  E2E:         ${e2e_cmd:-"(none)"}"
 echo "  FE_PKG:      ${fe_pkg_manager:-"(none)"}"
 echo "  FE_DIR:      ${fe_dir:-"(root)"}"
 echo "  DOCKER:      ${has_docker}"
+echo "  SECRET_SCAN: ${PROJECT_SECRET_SCAN_CMD:-"(none — install gitleaks for secret scanning)"}"
 echo ""
 echo "Review and adjust as needed, then commit to git."
 
