@@ -27,6 +27,16 @@ do_remote_merge() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="${5:-}"
     local events_log="$repo_root/.specify/logs/events.jsonl"
 
+    # Guardrail: refuse merge to main/master when staging exists
+    if [[ "$MERGE_TARGET" =~ ^(main|master)$ ]] && \
+       { git -C "$repo_root" rev-parse --verify origin/staging &>/dev/null || \
+         git -C "$repo_root" rev-parse --verify staging &>/dev/null; } && \
+       [[ "${ALLOW_MAIN_MERGE:-false}" != "true" ]]; then
+        log ERROR "Refusing to merge to '$MERGE_TARGET' — a 'staging' branch exists."
+        log ERROR "Set BASE_BRANCH=staging in .specify/project.env, or pass --allow-main-merge"
+        return 1
+    fi
+
     # Suppress ANSI color from gh CLI output
     export GH_NO_COLOR=1
 
@@ -42,6 +52,19 @@ do_remote_merge() {
         log WARN "gh CLI not installed — falling back to local merge"
         do_merge "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"
         return $?
+    fi
+
+    # Pre-merge gate history check
+    local tasks_file="$repo_root/specs/$short_name/tasks.md"
+    local skip_summary="" skip_count=0
+    grep -q 'SECURITY_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Security: findings force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'REQUIREMENTS_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Requirements: gaps force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'REVIEW_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Review: issues force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'VERIFY_CI_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - CI: failures force-skipped\n"; skip_count=$((skip_count+1)); }
+
+    if [[ $skip_count -gt 0 ]]; then
+        log WARN "PRE-MERGE RISK SUMMARY: $skip_count gate(s) force-skipped:"
+        printf "%b" "$skip_summary" | while read -r line; do log WARN "$line"; done
     fi
 
     # Interactive confirmation

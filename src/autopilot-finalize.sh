@@ -3,6 +3,87 @@
 # Handles post-merge integration check: test/lint fix loop, cross-epic review, summary.
 set -euo pipefail
 
+# ─── Auto-Revert Helper ──────────────────────────────────────────────────────
+
+# Suggest or auto-revert a merge commit on finalize failure.
+# Returns: 0=no-op (no SHA), 1=error/manual, 2=auto-reverted successfully.
+_suggest_or_auto_revert() {
+    local sha="$1" repo_root="$2"
+    if [[ -z "$sha" ]]; then
+        log WARN "No merge SHA available — cannot suggest revert"
+        return 0
+    fi
+    if ! git -C "$repo_root" rev-parse --verify "${sha}^{commit}" &>/dev/null; then
+        log ERROR "Merge SHA $sha no longer reachable — cannot auto-revert"
+        return 1
+    fi
+    sha=$(git -C "$repo_root" rev-parse "$sha" 2>/dev/null || echo "$sha")
+    local parent_count
+    parent_count=$(git -C "$repo_root" rev-list --parents -1 "$sha" 2>/dev/null | wc -w)
+    local merge_flag=""
+    [[ "${parent_count:-0}" -ge 3 ]] && merge_flag="-m 1"
+    local display_cmd="git revert --no-edit ${merge_flag} $sha && git push"
+
+    if [[ "${AUTO_REVERT_ON_FAILURE:-false}" == "true" ]]; then
+        log WARN "Auto-reverting merge $sha on ${MERGE_TARGET:-$BASE_BRANCH}"
+        if git -C "$repo_root" revert --no-edit $merge_flag "$sha" && \
+           git -C "$repo_root" push; then
+            log OK "Merge reverted. Feature branch preserved — fix and re-merge."
+            return 2
+        else
+            log ERROR "Auto-revert failed. Run manually: $display_cmd"
+            return 1
+        fi
+    else
+        log ERROR "To revert the last merge: $display_cmd"
+        return 1
+    fi
+}
+
+# ─── Error Reporting Helper ──────────────────────────────────────────────────
+
+# Persist finalize failure data and test output for debugging/resume.
+_persist_finalize_failure() {
+    local repo_root="$1" reason="$2"
+    local log_dir="$repo_root/.specify/logs"
+    mkdir -p "$log_dir"
+
+    # Write failure JSON
+    local failure_file="$log_dir/finalize-failure.json"
+    jq -nc \
+        --arg reason "$reason" \
+        --arg sha "${LAST_MERGE_SHA:-}" \
+        --arg branch "${MERGE_TARGET:-${BASE_BRANCH:-}}" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{reason:$reason, merge_sha:$sha, branch:$branch, timestamp:$ts}' \
+        > "$failure_file" 2>/dev/null || true
+
+    # Persist test output if available
+    local test_out_file="$log_dir/finalize-test-output.txt"
+    if [[ -n "${LAST_TEST_OUTPUT:-}" ]]; then
+        printf '%s\n' "$LAST_TEST_OUTPUT" > "$test_out_file"
+    fi
+
+    log INFO "Failure data persisted to $log_dir/finalize-failure.json"
+}
+
+# Restore LAST_MERGE_SHA from status file if not already set.
+_restore_merge_sha() {
+    local repo_root="$1"
+    if [[ -n "${LAST_MERGE_SHA:-}" ]]; then
+        return 0
+    fi
+    local failure_file="$repo_root/.specify/logs/finalize-failure.json"
+    if [[ -f "$failure_file" ]]; then
+        local saved_sha
+        saved_sha=$(jq -r '.merge_sha // empty' "$failure_file" 2>/dev/null || true)
+        if [[ -n "$saved_sha" ]]; then
+            LAST_MERGE_SHA="$saved_sha"
+            log INFO "Restored LAST_MERGE_SHA=$saved_sha from finalize-failure.json"
+        fi
+    fi
+}
+
 # ─── Finalize (all epics merged) ─────────────────────────────────────────────
 
 # Run finalize phase: test/lint → fix iteratively → cross-epic review → summary.
@@ -10,18 +91,22 @@ set -euo pipefail
 run_finalize() {
     local repo_root="$1"
 
+    # Restore merge SHA from previous failure if resuming
+    _restore_merge_sha "$repo_root"
+
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════╗${RESET}"
     echo -e "${BOLD}║  FINALIZE: All Epics Merged — Integration Check        ║${RESET}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 
-    # Ensure we're on base branch
+    # Ensure we're on the correct finalize branch
+    local finalize_branch="${MERGE_TARGET:-$BASE_BRANCH}"
     local current_branch
     current_branch=$(git -C "$repo_root" branch --show-current)
-    if [[ "$current_branch" != "$BASE_BRANCH" ]]; then
-        log INFO "Switching to $BASE_BRANCH for finalize"
-        git -C "$repo_root" checkout "$BASE_BRANCH"
+    if [[ "$current_branch" != "$finalize_branch" ]]; then
+        log INFO "Switching to $finalize_branch for finalize"
+        git -C "$repo_root" checkout "$finalize_branch"
     fi
 
     # ── Step 1: Iterative test/lint fix loop ──
@@ -58,7 +143,7 @@ run_finalize() {
 
         # If both pass, break
         if $tests_ok && $build_ok && $lint_ok; then
-            log OK "Tests, build, and lint pass on $BASE_BRANCH"
+            log OK "Tests, build, and lint pass on $finalize_branch"
             break
         fi
 
@@ -89,6 +174,8 @@ run_finalize() {
 
     if ! $tests_ok; then
         log ERROR "Finalize: tests still failing after $max_fix_rounds fix rounds"
+        _persist_finalize_failure "$repo_root" "tests_failing_after_${max_fix_rounds}_rounds"
+        _suggest_or_auto_revert "${LAST_MERGE_SHA:-}" "$repo_root" || true
         return 1
     fi
 
@@ -127,6 +214,8 @@ run_finalize() {
             invoke_claude "finalize-fix" "$refix_prompt" "FIN" "Post-review fix" || true
             if ! verify_tests "$repo_root"; then
                 log ERROR "Finalize: tests fail after integration review fix attempt"
+                _persist_finalize_failure "$repo_root" "tests_failing_after_review_fix"
+                _suggest_or_auto_revert "${LAST_MERGE_SHA:-}" "$repo_root" || true
                 return 1
             fi
         fi

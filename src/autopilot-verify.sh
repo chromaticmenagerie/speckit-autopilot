@@ -56,28 +56,28 @@ in_test && !found_first && /^\t[^\t ]/ {
         print FILENAME ":" NR ": " $0
     }
 }
-' {} + 2>/dev/null || true)
+' {} + 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
                 ;;
             Python)
-                skip_files=$(grep -rlE '@pytest\.mark\.skip\b' "$repo_root" \
+                skip_files=$(grep -rnE '@pytest\.mark\.skip\b' "$repo_root" \
                     --include='test_*.py' --include='*_test.py' \
                     --exclude-dir=vendor --exclude-dir=.git \
                     --exclude-dir=node_modules --exclude-dir=__pycache__ \
-                    --exclude-dir=third_party 2>/dev/null || true)
+                    --exclude-dir=third_party 2>/dev/null | grep -v '#.*speckit:allow-skip' || true)
                 ;;
             Node/JS/TS|Node-Monorepo)
-                skip_files=$(grep -rlE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' "$repo_root" \
+                skip_files=$(grep -rnE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' "$repo_root" \
                     --include='*.test.ts' --include='*.test.js' --include='*.test.tsx' \
                     --include='*.test.jsx' --include='*.spec.ts' --include='*.spec.js' \
                     --exclude-dir=vendor --exclude-dir=.git \
                     --exclude-dir=node_modules --exclude-dir=dist \
-                    --exclude-dir=third_party 2>/dev/null || true)
+                    --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
                 ;;
             Rust)
-                skip_files=$(grep -rlE '#\[ignore\]' "$repo_root" \
+                skip_files=$(grep -rnE '#\[ignore\]' "$repo_root" \
                     --include='*.rs' \
                     --exclude-dir=vendor --exclude-dir=.git \
-                    --exclude-dir=target --exclude-dir=third_party 2>/dev/null || true)
+                    --exclude-dir=target --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
                 ;;
             *)
                 # Unknown/Makefile — skip stub detection (no reliable pattern)
@@ -88,14 +88,14 @@ in_test && !found_first && /^\t[^\t ]/ {
             local skip_count
             skip_count=$(echo "$skip_files" | wc -l | tr -d ' ')
             if [[ "$enforcement" == "error" ]]; then
-                log ERROR "Found $skip_count test file(s) with skip/stub markers:"
+                log ERROR "Found $skip_count skip marker(s) with skip/stub markers:"
                 echo "$skip_files" | while read -r f; do
                     log ERROR "  - $f"
                 done
                 return 1
             else
                 # enforcement == warn
-                log WARN "Found $skip_count test file(s) with skip/stub markers (enforcement=warn):"
+                log WARN "Found $skip_count skip marker(s) with skip/stub markers (enforcement=warn):"
                 echo "$skip_files" | while read -r f; do
                     log WARN "  - $f"
                 done

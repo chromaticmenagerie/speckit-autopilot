@@ -330,6 +330,92 @@ rc=0
 verify_tests "$repo13" "error" || rc=$?
 assert_eq "0" "$rc" "Rust clean test not flagged"
 
+# ─── speckit:allow-skip annotation ────────────────────────────────────────
+
+echo ""
+echo "=== speckit:allow-skip annotation ==="
+
+# Test: Python with speckit:allow-skip NOT flagged
+echo "Test: Python speckit:allow-skip not flagged"
+repo_py_allow="$TMPDIR_ROOT/py-allow-skip"
+mkdir -p "$repo_py_allow"
+cat > "$repo_py_allow/test_handler.py" <<'EOF'
+import pytest
+
+@pytest.mark.skip(reason="not implemented")  # speckit:allow-skip
+def test_handler():
+    pass
+EOF
+PROJECT_LANG="Python"
+PROJECT_TEST_CMD="true"
+PROJECT_WORK_DIR="."
+LAST_TEST_OUTPUT=""
+rc=0
+verify_tests "$repo_py_allow" "error" || rc=$?
+assert_eq "0" "$rc" "Python speckit:allow-skip not flagged"
+
+# Test: JS/TS with speckit:allow-skip NOT flagged
+echo "Test: JS/TS speckit:allow-skip not flagged"
+repo_js_allow="$TMPDIR_ROOT/js-allow-skip"
+mkdir -p "$repo_js_allow"
+cat > "$repo_js_allow/handler.test.ts" <<'EOF'
+describe('handler', () => {
+  it.skip('should work', () => { // speckit:allow-skip
+    expect(true).toBe(true);
+  });
+});
+EOF
+PROJECT_LANG="Node/JS/TS"
+PROJECT_TEST_CMD="true"
+PROJECT_WORK_DIR="."
+LAST_TEST_OUTPUT=""
+rc=0
+verify_tests "$repo_js_allow" "error" || rc=$?
+assert_eq "0" "$rc" "JS/TS speckit:allow-skip not flagged"
+
+# Test: Rust with speckit:allow-skip NOT flagged
+echo "Test: Rust speckit:allow-skip not flagged"
+repo_rs_allow="$TMPDIR_ROOT/rust-allow-skip"
+mkdir -p "$repo_rs_allow/src"
+cat > "$repo_rs_allow/src/lib.rs" <<'EOF'
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore] // speckit:allow-skip
+    fn test_handler() {
+        assert!(true);
+    }
+}
+EOF
+PROJECT_LANG="Rust"
+PROJECT_TEST_CMD="true"
+PROJECT_WORK_DIR="."
+LAST_TEST_OUTPUT=""
+rc=0
+verify_tests "$repo_rs_allow" "error" || rc=$?
+assert_eq "0" "$rc" "Rust speckit:allow-skip not flagged"
+
+# Test: Go with speckit:allow-skip NOT flagged
+echo "Test: Go speckit:allow-skip not flagged"
+repo_go_allow="$TMPDIR_ROOT/go-allow-skip"
+mkdir -p "$repo_go_allow"
+cat > "$repo_go_allow/handler_test.go" <<'EOF'
+package main
+
+import "testing"
+
+func TestHandler(t *testing.T) {
+	t.Skip("not implemented yet") // speckit:allow-skip
+}
+EOF
+PROJECT_LANG="Go"
+PROJECT_TEST_CMD="true"
+PROJECT_WORK_DIR="."
+LAST_TEST_OUTPUT=""
+rc=0
+verify_tests "$repo_go_allow" "error" || rc=$?
+assert_eq "0" "$rc" "Go speckit:allow-skip not flagged"
+
 # ─── Unknown language ──────────────────────────────────────────────────────
 
 echo ""

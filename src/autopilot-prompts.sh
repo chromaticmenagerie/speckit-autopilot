@@ -404,8 +404,17 @@ EOF
 
 prompt_implement() {
     local epic_num="$1" title="$2" repo_root="$3" spec_dir="$4"
+    local current_phase="${5:-1}" total_phases="${6:-1}"
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
+$(if [[ "$total_phases" -gt 1 ]]; then
+cat <<SCOPE
+
+SCOPE: Implement Phase $current_phase of $total_phases ONLY.
+$(if [[ $current_phase -gt 1 ]]; then echo "Phases 1-$((current_phase-1)) are already complete."; else echo "This is the first phase."; fi)
+Focus ONLY on Phase $current_phase tasks. Do NOT touch completed phases.
+SCOPE
+fi)
 
 Read ALL design artifacts in ${spec_dir}/ to understand the full scope.
 If ${spec_dir}/design-context.md exists, read it. It is the authoritative visual specification:
@@ -639,6 +648,7 @@ fi)
      Do NOT report as dead code: init() functions, interface method implementations,
      HTTP/RPC handler functions registered via mux/router, or functions referenced
      in generated code.
+     Do NOT report as dead code: stubs or functions tied to deferred tasks (- [-] in tasks.md). However, flag deferred-task code with side effects (unused heavy imports, registered routes, open connections) as MEDIUM.
      Report each confirmed case as:
      MEDIUM: Dead code: file:line — functionName() has no callers in non-test code
 
@@ -1057,6 +1067,8 @@ Read the evidence file at $evidence_file. For each FR-NNN listed:
 Write your findings to $findings_file in this format:
 - FR-NNN: PASS|PARTIAL|NOT_FOUND|DEFERRED — brief explanation
 
+If specs/${short_name}/plan.md exists, also read it for implementation approach context. spec.md has the 'what', plan.md has the 'how'.
+
 Be thorough but concise. Check actual code, not just file names.
 EOF
 }
@@ -1082,6 +1094,8 @@ For each failing FR:
 4. Write tests for the new code
 5. Run tests to verify
 6. Commit your changes
+
+If specs/${short_name}/plan.md exists, also read it for implementation approach context. spec.md has the 'what', plan.md has the 'how'.
 
 Only fix the FRs listed above. Do not modify unrelated code.
 EOF

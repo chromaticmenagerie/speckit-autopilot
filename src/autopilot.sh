@@ -165,10 +165,12 @@ SECURITY_FORCE_SKIP_ALLOWED="${SECURITY_FORCE_SKIP_ALLOWED:-true}"
 REQUIREMENTS_FORCE_SKIP_ALLOWED="${REQUIREMENTS_FORCE_SKIP_ALLOWED:-true}"
 FORCE_SKIP_CASCADE_LIMIT="${FORCE_SKIP_CASCADE_LIMIT:-3}"
 MAX_ITERATIONS=""   # CLI override for iteration safety limit
+AUTO_REVERT_ON_FAILURE=false
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --auto-revert)      AUTO_REVERT_ON_FAILURE=true ;;
             --no-auto-continue) AUTO_CONTINUE=false ;;
             --dry-run)          DRY_RUN=true ;;
             --silent)           SILENT=true ;;
@@ -199,6 +201,7 @@ parse_args() {
                 log WARN "--allow-requirements-skip is deprecated (gates now advance by default). Use --strict to halt. Will be removed in v0.11.0."
                 ;;
             --allow-cascade) FORCE_SKIP_CASCADE_LIMIT=99 ;;
+            --allow-main-merge) ALLOW_MAIN_MERGE=true ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --max-iterations)
                 shift
@@ -229,7 +232,9 @@ parse_args() {
                 echo "  --strict-deps        Block on unmerged dependencies (default: warn only)"
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 echo "  --allow-cascade      Raise cascade circuit-breaker limit to 99 (allow many gate skips)"
-                echo "  --max-iterations N   Override iteration safety limit (default: 40)"
+                echo "  --allow-main-merge   Allow merge to main/master even when staging branch exists"
+                echo "  --max-iterations N   Override iteration safety limit (default: 60)"
+                echo "  --auto-revert        Auto-revert merge on finalize failure (opt-in)"
                 echo ""
                 echo "Deprecated (no-ops, gates now advance by default; use --strict to halt):"
                 echo "  --allow-deferred"
@@ -363,7 +368,10 @@ run_phase() {
             prompt="$(prompt_analyze_verify "$epic_num" "$title" "$repo_root" "$spec_dir" "$round" "$max_rounds")"
             ;;
         implement)
-            prompt="$(prompt_implement "$epic_num" "$title" "$repo_root" "$spec_dir")"
+            local cur_phase total_phases
+            cur_phase=$(get_current_impl_phase "$spec_dir/tasks.md")
+            total_phases=$(count_phases "$spec_dir/tasks.md")
+            prompt="$(prompt_implement "$epic_num" "$title" "$repo_root" "$spec_dir" "${cur_phase:-1}" "${total_phases:-1}")"
             ;;
         review)
             prompt="$(prompt_review "$epic_num" "$title" "$repo_root" "$short_name")"
@@ -456,6 +464,29 @@ do_merge() {
     local short_name="$3"
     local title="$4"
     local epic_file="${5:-}"
+
+    # Guardrail: refuse merge to main/master when staging exists
+    if [[ "$MERGE_TARGET" =~ ^(main|master)$ ]] && \
+       { git -C "$repo_root" rev-parse --verify origin/staging &>/dev/null || \
+         git -C "$repo_root" rev-parse --verify staging &>/dev/null; } && \
+       [[ "${ALLOW_MAIN_MERGE:-false}" != "true" ]]; then
+        log ERROR "Refusing to merge to '$MERGE_TARGET' — a 'staging' branch exists."
+        log ERROR "Set BASE_BRANCH=staging in .specify/project.env, or pass --allow-main-merge"
+        return 1
+    fi
+
+    # Pre-merge gate history check
+    local tasks_file="$repo_root/specs/$short_name/tasks.md"
+    local skip_summary="" skip_count=0
+    grep -q 'SECURITY_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Security: findings force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'REQUIREMENTS_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Requirements: gaps force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'REVIEW_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - Review: issues force-skipped\n"; skip_count=$((skip_count+1)); }
+    grep -q 'VERIFY_CI_FORCE_SKIPPED' "$tasks_file" 2>/dev/null && { skip_summary+="  - CI: failures force-skipped\n"; skip_count=$((skip_count+1)); }
+
+    if [[ $skip_count -gt 0 ]]; then
+        log WARN "PRE-MERGE RISK SUMMARY: $skip_count gate(s) force-skipped:"
+        printf "%b" "$skip_summary" | while read -r line; do log WARN "$line"; done
+    fi
 
     echo ""
     echo -e "${BOLD}════════════════════════════════════════════════════════════${RESET}"
@@ -711,21 +742,57 @@ run_epic() {
 
     # Phase loop
     local total_iterations=0
-    local max_iter=${MAX_ITERATIONS:-40}
+    local max_iter=${MAX_ITERATIONS:-60}
     local consecutive_deferred=0
     local force_skip_count=0
     local force_skip_cascade_limit=${FORCE_SKIP_CASCADE_LIMIT:-3}
+    local prev_tasks_hash="" prev_commit_sha="" same_hash_count=0 oscillation_stalled=false outer_prev_state=""
 
     while true; do
         total_iterations=$((total_iterations + 1))
         if [[ $total_iterations -gt $max_iter ]]; then
             log ERROR "Epic $epic_num exceeded $max_iter total phase iterations — possible oscillation. Stopping."
             log ERROR "Resume with: ./autopilot.sh $epic_num"
+
+            # Abort any in-progress rebase/merge
+            [[ -d "$repo_root/.git/rebase-merge" ]] || [[ -d "$repo_root/.git/rebase-apply" ]] && \
+                git -C "$repo_root" rebase --abort 2>/dev/null || true
+            [[ -f "$repo_root/.git/MERGE_HEAD" ]] && \
+                git -C "$repo_root" merge --abort 2>/dev/null || true
+
+            # Emergency commit of dirty working tree
+            if [[ -n "$(git -C "$repo_root" status --porcelain --ignore-submodules=all 2>/dev/null)" ]]; then
+                log WARN "Saving uncommitted work before halt..."
+                git -C "$repo_root" add -A
+                git -C "$repo_root" diff --cached --quiet 2>/dev/null || \
+                    git -C "$repo_root" commit --no-verify \
+                        -m "emergency(${epic_num}): max-iter halt [state: ${state:-unknown}]" 2>/dev/null || true
+            fi
+
             return 1
         fi
 
         state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
         log INFO "Detected state: $state"
+
+        # Oscillation detection: track tasks hash + commit SHA + state across outer-loop iterations
+        local cur_tasks_hash cur_commit_sha
+        cur_tasks_hash=$(_file_hash "$repo_root/specs/$short_name/tasks.md")
+        cur_commit_sha=$(git -C "$repo_root" log -1 --format=%H 2>/dev/null || echo "none")
+
+        if [[ "$cur_tasks_hash" == "$prev_tasks_hash" && "$cur_commit_sha" == "$prev_commit_sha" && "$state" == "$outer_prev_state" ]]; then
+            same_hash_count=$((same_hash_count + 1))
+            if [[ $same_hash_count -ge 3 ]]; then
+                log WARN "Phase '$state' stalled for 3 outer-loop iterations — deferring"
+                oscillation_stalled=true
+            fi
+        else
+            same_hash_count=0
+            oscillation_stalled=false
+        fi
+        prev_tasks_hash="$cur_tasks_hash"
+        prev_commit_sha="$cur_commit_sha"
+        outer_prev_state="$state"
 
         local _tasks_file=""
         [[ -n "$short_name" ]] && _tasks_file="$repo_root/specs/$short_name/tasks.md"
@@ -784,8 +851,8 @@ run_epic() {
                 done
 
                 if [[ $retries -ge ${PHASE_MAX_RETRIES[$state]:-3} ]]; then
-                    log ERROR "Review failed after ${PHASE_MAX_RETRIES[$state]:-3} attempts"
-                    return 1
+                    log WARN "Review prompt failed ${PHASE_MAX_RETRIES[$state]:-3} times — force-advancing to tiered review"
+                    _restore_clean_working_tree "$repo_root"
                 fi
 
                 log INFO "Review phase complete — transitioning to merge gate"
@@ -846,6 +913,12 @@ run_epic() {
         local retries=0
         local prev_state="$state"
 
+        # Capture impl phase before invoke for phase-advance detection
+        local prev_impl_phase=""
+        if [[ "$state" == "implement" ]] && [[ -n "$short_name" ]]; then
+            prev_impl_phase=$(get_current_impl_phase "$repo_root/specs/$short_name/tasks.md")
+        fi
+
         while [[ $retries -lt ${PHASE_MAX_RETRIES[$state]:-3} ]]; do
             local phase_exit=0
             run_phase "$state" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "$((retries + 1))" "${PHASE_MAX_RETRIES[$state]:-3}" || phase_exit=$?
@@ -895,6 +968,22 @@ run_epic() {
                     fi
                 fi
 
+                # Phase-advance detection for implement (sub-phase progress)
+                if [[ "$state" == "implement" ]] && [[ -n "$short_name" ]]; then
+                    local new_impl_phase
+                    new_impl_phase=$(get_current_impl_phase "$repo_root/specs/$short_name/tasks.md")
+                    if [[ "$new_impl_phase" != "$prev_impl_phase" ]]; then
+                        log OK "Implement phase advanced: $prev_impl_phase -> $new_impl_phase"
+                        consecutive_deferred=0
+                        retries=0
+                        prev_tasks_hash=""
+                        prev_commit_sha=""
+                        same_hash_count=0
+                        prev_impl_phase="$new_impl_phase"
+                        continue
+                    fi
+                fi
+
                 # Verify state advanced
                 local new_state
                 new_state="$(detect_state "$repo_root" "$epic_num" "$short_name")"
@@ -930,7 +1019,7 @@ run_epic() {
             fi
         done
 
-        if [[ $retries -ge ${PHASE_MAX_RETRIES[$state]:-3} ]]; then
+        if [[ "$oscillation_stalled" == "true" ]] || [[ $retries -ge ${PHASE_MAX_RETRIES[$state]:-3} ]]; then
             # Iterative phases: force-advance instead of erroring
             local spec_dir="$repo_root/specs/$short_name"
             if [[ "$state" == "clarify" ]] && [[ -f "$spec_dir/spec.md" ]]; then
@@ -1066,7 +1155,9 @@ run_epic() {
 main() {
     # Preflight: jq required for stream-json processing
     if ! command -v jq >/dev/null 2>&1; then
-        echo "ERROR: jq is required for autopilot observability. Install: sudo apt install jq" >&2
+        local install_cmd="sudo apt install jq"
+        [[ "$OSTYPE" == darwin* ]] && install_cmd="brew install jq"
+        echo "ERROR: jq is required for autopilot observability. Install: $install_cmd" >&2
         exit 1
     fi
 
@@ -1125,12 +1216,22 @@ main() {
     BASE_BRANCH="${BASE_BRANCH:-master}"
     MERGE_TARGET="$(detect_merge_target "$repo_root")"
 
+    if [[ "$MERGE_TARGET" =~ ^(main|master)$ ]]; then
+        if git -C "$repo_root" rev-parse --verify staging &>/dev/null || \
+           git -C "$repo_root" rev-parse --verify origin/staging &>/dev/null; then
+            log WARN "Merging to '$MERGE_TARGET' but a 'staging' branch exists."
+            log WARN "Consider setting MERGE_TARGET_BRANCH=staging in .specify/project.env"
+        fi
+    fi
+
     log INFO "Autopilot started (auto-continue=$AUTO_CONTINUE, dry-run=$DRY_RUN, silent=$SILENT)"
     log INFO "Repository: $repo_root (base: $BASE_BRANCH, merge target: $MERGE_TARGET)"
     log INFO "Dashboard: run ${BOLD}autopilot-watch.sh${RESET} in another terminal"
 
     # Trap for clean exit
     trap 'rm -f "${TMPDIR:-/tmp}"/autopilot-{prompt,content}-* 2>/dev/null; if [[ ${#TARGET_EPICS[@]} -gt 0 ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]}"; elif [[ -n "$TARGET_EPIC" ]]; then log WARN "Autopilot interrupted. Resume with: ./autopilot.sh $TARGET_EPIC"; else log WARN "Autopilot interrupted. Resume with: ./autopilot.sh"; fi; exit 130' INT TERM
+
+    local _rc=0
 
     while true; do
         # Find next epic
@@ -1146,9 +1247,13 @@ main() {
                 log OK "All epics in range ${TARGET_EPICS[0]}-${TARGET_EPICS[-1]} complete"
             elif [[ -n "$TARGET_EPIC" ]]; then
                 log ERROR "Epic $TARGET_EPIC not found"
+                _rc=1
             else
                 log OK "All epics complete!"
-                run_finalize "$repo_root" || log ERROR "Finalize failed"
+                if ! run_finalize "$repo_root"; then
+                    log ERROR "Finalize failed"
+                    _rc=1
+                fi
             fi
             break
         fi
@@ -1164,6 +1269,7 @@ main() {
         # Run the epic lifecycle
         if ! run_epic "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
             log ERROR "Epic $epic_num did not complete successfully"
+            _rc=1
             break
         fi
 
@@ -1199,6 +1305,7 @@ main() {
     done
 
     log OK "Autopilot finished"
+    return $_rc
 }
 
 main "$@"

@@ -582,6 +582,17 @@ load_project_config() {
     if [[ ! -f "$config_file" ]]; then
         log ERROR "Missing .specify/project.env — autopilot cannot run without it."
         log ERROR "Create it manually or run: .specify/scripts/bash/autopilot-detect-project.sh"
+        if [[ -t 0 ]]; then
+            read -rp "Auto-detect project settings? [Y/n] " answer
+            if [[ "${answer:-Y}" =~ ^[Yy] ]]; then
+                log INFO "Running auto-detection..."
+                "$SCRIPT_DIR/autopilot-detect-project.sh" "$repo_root" && {
+                    source "$config_file"
+                    log OK "Project config auto-detected and loaded"
+                    return 0
+                }
+            fi
+        fi
         exit 1
     fi
 
@@ -649,8 +660,12 @@ detect_merge_target() {
     local repo_root="${1:-.}"
     # Explicit override from environment / project.env
     if [[ -n "${MERGE_TARGET_BRANCH:-}" ]]; then
-        echo "$MERGE_TARGET_BRANCH"
-        return
+        if git -C "$repo_root" rev-parse --verify "$MERGE_TARGET_BRANCH" >/dev/null 2>&1 || \
+           git -C "$repo_root" rev-parse --verify "origin/$MERGE_TARGET_BRANCH" >/dev/null 2>&1; then
+            echo "$MERGE_TARGET_BRANCH"
+            return
+        fi
+        log WARN "MERGE_TARGET_BRANCH=$MERGE_TARGET_BRANCH not found — falling back to detection"
     fi
     # Convention-based detection: check staging, then test
     for branch in staging test; do
@@ -938,6 +953,14 @@ See \`specs/*/skipped-findings.md\` for details.
 $summary
 
 *Created by speckit-autopilot*" 2>/dev/null || return 0
+}
+
+# ─── Working Tree Restore ─────────────────────────────────────────────────────
+
+_restore_clean_working_tree() {
+    local repo_root="$1"
+    git -C "$repo_root" reset HEAD . 2>/dev/null || true
+    git -C "$repo_root" checkout -- . 2>/dev/null || true
 }
 
 # ─── File Hashing ────────────────────────────────────────────────────────────

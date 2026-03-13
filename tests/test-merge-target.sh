@@ -125,10 +125,38 @@ git -C "$repo" init -q
 git -C "$repo" commit --allow-empty -m "init" -q
 git -C "$repo" branch staging  # staging exists but env var should win
 
+git -C "$repo" branch custom-branch
 export MERGE_TARGET_BRANCH="custom-branch"
 result="$(detect_merge_target "$repo")"
 assert_eq "custom-branch" "$result" "returns MERGE_TARGET_BRANCH when set, even if staging exists"
 unset MERGE_TARGET_BRANCH
+
+# ─── Test: detect_merge_target — WARN and fallback for non-existent override ─
+
+echo "Test: detect_merge_target — MERGE_TARGET_BRANCH non-existent → WARN + fallback"
+
+repo="$TMPDIR/repo-env-fallback"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" commit --allow-empty -m "init" -q
+git -C "$repo" branch staging  # fallback target
+
+LOG_OUTPUT=""
+log() { LOG_OUTPUT+="$1 $2"$'\n'; }
+
+export MERGE_TARGET_BRANCH="no-such-branch"
+BASE_BRANCH="main"
+result="$(detect_merge_target "$repo")"
+assert_eq "staging" "$result" "falls back to staging when MERGE_TARGET_BRANCH branch missing"
+
+# Capture log from the subshell — log runs inside $(), so we call again outside
+LOG_OUTPUT=""
+detect_merge_target "$repo" >/dev/null
+[[ "$LOG_OUTPUT" == *"WARN"* ]] && warn_logged="true" || warn_logged="false"
+assert_eq "true" "$warn_logged" "logs WARN when MERGE_TARGET_BRANCH is non-existent"
+
+unset MERGE_TARGET_BRANCH
+log() { :; }  # restore stub
 
 # ─── Squash Merge Detection Tests ───────────────────────────────────────────
 
