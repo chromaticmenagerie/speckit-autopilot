@@ -277,7 +277,16 @@ gh_sync_done() {
         local url item_id
         url=$(jq -r --arg k "$key" '.tasks[$k].url // empty' "$json_file" 2>/dev/null)
         item_id=$(jq -r --arg k "$key" '.tasks[$k].item_id // empty' "$json_file" 2>/dev/null)
-        [[ -n "$url" ]] && gh_try "close task $key" gh issue close "$url" >/dev/null 2>&1 || true
+        # Before closing, check for skip-findings label
+        if [[ -n "$url" ]]; then
+            local labels
+            labels=$(gh issue view "$url" --repo "$GH_OWNER_REPO" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+            if echo "$labels" | grep -q "autopilot:skipped-findings"; then
+                log INFO "Skipping close for skip-findings issue: $url"
+                continue
+            fi
+            gh_try "close task $key" gh issue close "$url" >/dev/null 2>&1 || true
+        fi
         [[ -n "$item_id" ]] && gh_update_status "$item_id" "done" || true
     done <<< "$task_keys"
 
