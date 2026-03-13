@@ -27,7 +27,8 @@ PROJECT_FORMAT_CMD=""
 PROJECT_PREFLIGHT_TOOLS=""
 BASE_BRANCH=""
 FORCE_ADVANCE_ON_REVIEW_FAIL="false"
-CONVERGENCE_STALL_ROUNDS=2
+CONVERGENCE_STALL_ROUNDS="${CONVERGENCE_STALL_ROUNDS:-2}"
+DIMINISHING_RETURNS_THRESHOLD="${DIMINISHING_RETURNS_THRESHOLD:-3}"
 CODERABBIT_MAX_ROUNDS=3
 SECURITY_MAX_ROUNDS=3
 CODEX_MAX_ROUNDS=3
@@ -547,7 +548,10 @@ load_project_config() {
     FORCE_ADVANCE_ON_REVIEW_ERROR=""
     FORCE_ADVANCE_ON_DIMINISHING_RETURNS=""
     PROJECT_PREFLIGHT_TOOLS=""
-    CONVERGENCE_STALL_ROUNDS=2
+    CONVERGENCE_STALL_ROUNDS="${CONVERGENCE_STALL_ROUNDS:-2}"
+    DIMINISHING_RETURNS_THRESHOLD="${DIMINISHING_RETURNS_THRESHOLD:-3}"
+    STALL_ADVANCE_MAX_ISSUES="${STALL_ADVANCE_MAX_ISSUES:-5}"
+    STALL_ADVANCE_MAX_REMAINING_PCT="${STALL_ADVANCE_MAX_REMAINING_PCT:-50}"
     CODERABBIT_MAX_ROUNDS=3
     SECURITY_MAX_ROUNDS="${SECURITY_MAX_ROUNDS:-3}"
     CODEX_MAX_ROUNDS="${CODEX_MAX_ROUNDS:-3}"
@@ -854,6 +858,99 @@ _exec_in_new_pgrp() {
     else
         log ERROR "perl or python3 required for process group isolation"
         return 1
+    fi
+}
+
+# ─── Force-Skip Audit Trail ──────────────────────────────────────────────────
+
+_write_force_skip_audit() {
+    local repo_root="$1" gate_name="$2" epic_num="$3" short_name="$4" \
+          findings_count="$5" findings_text="$6" severity="${7:-WARN}"
+    local log_dir="$repo_root/.specify/logs"
+    local spec_dir="$repo_root/specs/$short_name"
+    local skipped_findings="$spec_dir/skipped-findings.md"
+    local ts
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    mkdir -p "$log_dir" "$spec_dir"
+
+    # 1. Append to ephemeral log
+    echo "$severity|$gate_name|$findings_count findings|$ts" >> "$log_dir/gate-skipped-findings.log"
+
+    # 2. Append to committed audit trail
+    if [[ ! -f "$skipped_findings" ]]; then
+        printf '# Skipped Findings Audit Trail\nEpic: %s — %s\n' "$epic_num" "$short_name" > "$skipped_findings"
+    fi
+    printf '\n## %s — %s\n%s findings force-skipped\n\n%s\n' \
+        "$gate_name" "$ts" "$findings_count" "$findings_text" >> "$skipped_findings"
+
+    # 3. Emit structured event (if events log exists)
+    local events_log="$log_dir/events.jsonl"
+    if [[ -f "$events_log" ]] && command -v jq &>/dev/null; then
+        _emit_event "$events_log" "force_skip" \
+            "$(jq -nc --arg g "$gate_name" --arg e "$epic_num" --arg s "$severity" \
+               --argjson cnt "${findings_count:-0}" \
+               '{gate:$g, epic:$e, severity:$s, findings_count:$cnt}')" 2>/dev/null || true
+    fi
+
+    # 4. Commit audit file
+    git -C "$repo_root" add "$skipped_findings" 2>/dev/null || true
+    git -C "$repo_root" commit -m "audit($epic_num): $gate_name force-skipped ($findings_count findings)" \
+        --no-verify 2>/dev/null || true
+
+    # 5. Create/update GitHub issue (with dedup)
+    _gh_create_skip_issue "$repo_root" "$epic_num" "$gate_name" "$findings_count" "$findings_text"
+
+    log WARN "Force-skip audit: $gate_name ($findings_count findings) → $skipped_findings"
+}
+
+_gh_create_skip_issue() {
+    ${GH_ENABLED:-false} || return 0
+    local repo_root="$1" epic_num="$2" gate_name="$3" finding_count="$4" summary="$5"
+
+    # Dedup: check for existing open issue
+    local existing
+    existing=$(gh issue list --repo "${GH_OWNER_REPO:-}" \
+        --label "autopilot:skipped-findings,epic:$epic_num" \
+        --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+    if [[ -n "$existing" ]] && [[ "$existing" != "null" ]]; then
+        gh issue comment "$existing" \
+            --repo "${GH_OWNER_REPO:-}" \
+            --body "### $gate_name force-skipped ($finding_count findings)
+$summary
+*$(date -u +%Y-%m-%dT%H:%M:%SZ)*" 2>/dev/null || return 0
+        return 0
+    fi
+
+    # Create label (idempotent)
+    gh label create "autopilot:skipped-findings" --repo "${GH_OWNER_REPO:-}" \
+        --color "D93F0B" --description "Gate force-skipped with unresolved findings" 2>/dev/null || true
+
+    gh issue create \
+        --repo "${GH_OWNER_REPO:-}" \
+        --title "[Epic $epic_num] $gate_name force-skipped ($finding_count findings)" \
+        --label "autopilot:skipped-findings,epic:$epic_num" \
+        --body "### $gate_name force-skipped
+$finding_count findings remain after exhausting retry rounds.
+See \`specs/*/skipped-findings.md\` for details.
+
+$summary
+
+*Created by speckit-autopilot*" 2>/dev/null || return 0
+}
+
+# ─── File Hashing ────────────────────────────────────────────────────────────
+
+_file_hash() {
+    local file="$1"
+    [[ ! -f "$file" ]] && echo "missing" && return
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$file" | cut -d' ' -f1
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$file" | cut -d' ' -f1
+    else
+        cksum "$file" | cut -d' ' -f1
     fi
 }
 

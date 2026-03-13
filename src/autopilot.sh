@@ -36,6 +36,31 @@ source "$SCRIPT_DIR/autopilot-validate.sh"
 source "$SCRIPT_DIR/autopilot-design.sh"
 source "$SCRIPT_DIR/autopilot-requirements.sh"
 
+# ─── Cascade Circuit Breaker ────────────────────────────────────────────────
+
+# Cascade circuit breaker — prevents multiple gates force-skipping in series.
+# force_skip_count is a local in run_epic(); bash functions share caller's locals.
+_check_cascade_limit() {
+    local repo_root="$1" epic_num="$2" tasks_file="$3"
+    force_skip_count=$((force_skip_count + 1))
+    local limit=${FORCE_SKIP_CASCADE_LIMIT:-3}
+
+    if [[ $force_skip_count -ge $limit ]]; then
+        log ERROR "CASCADE LIMIT REACHED: $force_skip_count gates force-skipped in epic $epic_num"
+        log ERROR "Resume with: ./autopilot.sh $epic_num --allow-cascade"
+        echo "<!-- CASCADE_LIMIT_REACHED -->" >> "$tasks_file"
+        git -C "$repo_root" add "$tasks_file" 2>/dev/null || true
+        git -C "$repo_root" commit -m "cascade($epic_num): limit reached ($force_skip_count gates force-skipped)" \
+            --no-verify 2>/dev/null || true
+        return 1
+    elif [[ $force_skip_count -eq $((limit - 1)) ]]; then
+        log WARN "CASCADE WARNING: $force_skip_count of $limit gates force-skipped. Next force-skip will halt."
+    else
+        log WARN "$force_skip_count gate(s) force-skipped so far in epic $epic_num"
+    fi
+    return 0
+}
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 OPUS="opus"
@@ -137,6 +162,7 @@ SKIP_CODERABBIT=false
 SKIP_REVIEW=false
 SECURITY_FORCE_SKIP_ALLOWED=false
 REQUIREMENTS_FORCE_SKIP_ALLOWED=false
+FORCE_SKIP_CASCADE_LIMIT="${FORCE_SKIP_CASCADE_LIMIT:-3}"
 MAX_ITERATIONS=""   # CLI override for iteration safety limit
 
 parse_args() {
@@ -164,6 +190,7 @@ parse_args() {
             --allow-deferred)   ALLOW_DEFERRED=true ;;
             --allow-security-skip)  SECURITY_FORCE_SKIP_ALLOWED=true ;;
             --allow-requirements-skip)  REQUIREMENTS_FORCE_SKIP_ALLOWED=true ;;
+            --allow-cascade) FORCE_SKIP_CASCADE_LIMIT=99 ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
             --max-iterations)
                 shift
@@ -195,6 +222,7 @@ parse_args() {
                 echo "  --skip-review        Skip code review during remote merge (alias: --skip-coderabbit)"
                 echo "  --allow-security-skip  Force-advance past unresolved security findings"
                 echo "  --allow-requirements-skip  Force-advance past unresolved requirements gaps"
+                echo "  --allow-cascade      Raise cascade circuit-breaker limit to 99 (allow many gate skips)"
                 echo "  --max-iterations N   Override iteration safety limit (default: 40)"
                 exit 0
                 ;;
@@ -674,6 +702,8 @@ run_epic() {
     local total_iterations=0
     local max_iter=${MAX_ITERATIONS:-40}
     local consecutive_deferred=0
+    local force_skip_count=0
+    local force_skip_cascade_limit=${FORCE_SKIP_CASCADE_LIMIT:-3}
 
     while true; do
         total_iterations=$((total_iterations + 1))

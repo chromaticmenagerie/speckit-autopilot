@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Default for CLI flag (overridden by parse_args in autopilot.sh)
-REQUIREMENTS_FORCE_SKIP_ALLOWED="${REQUIREMENTS_FORCE_SKIP_ALLOWED:-false}"
+REQUIREMENTS_FORCE_SKIP_ALLOWED="${REQUIREMENTS_FORCE_SKIP_ALLOWED:-true}"
 
 # ─── Requirements Gate ────────────────────────────────────────────────────
 
@@ -94,9 +94,13 @@ Code references: ${code_refs:-NONE FOUND}
             continue
         fi
 
-        # Parse findings: check for NOT_FOUND or PARTIAL
-        if grep -qE '(NOT_FOUND|PARTIAL)' "$findings_file" 2>/dev/null; then
-            log WARN "Requirements gaps found — dispatching fix"
+        # Parse findings: classify NOT_FOUND vs PARTIAL separately
+        local has_not_found=false has_partial=false
+        grep -qE ': NOT_FOUND' "$findings_file" 2>/dev/null && has_not_found=true
+        grep -qE ': PARTIAL' "$findings_file" 2>/dev/null && has_partial=true
+
+        if [[ "$has_not_found" == "true" ]] || [[ "$has_partial" == "true" ]]; then
+            log WARN "Requirements gaps found (NOT_FOUND=$has_not_found, PARTIAL=$has_partial) — dispatching fix"
 
             # Extract failing FRs for scoped re-implement
             local failing_frs
@@ -119,18 +123,45 @@ Code references: ${code_refs:-NONE FOUND}
         return 0
     done
 
-    # Exhausted rounds
+    # Exhausted rounds — compute coverage percentage
     log ERROR "Requirements verification failed after $max_rounds rounds"
+
+    local pass_count partial_count deferred_count not_found_count total safe_count pct
+    pass_count=$(grep -c ': PASS' "$findings_file" 2>/dev/null || echo 0)
+    partial_count=$(grep -c ': PARTIAL' "$findings_file" 2>/dev/null || echo 0)
+    deferred_count=$(grep -c ': DEFERRED' "$findings_file" 2>/dev/null || echo 0)
+    not_found_count=$(grep -c ': NOT_FOUND' "$findings_file" 2>/dev/null || echo 0)
+    total=$((pass_count + partial_count + deferred_count + not_found_count))
+    [[ $total -eq 0 ]] && return 0
+    safe_count=$((pass_count + partial_count + deferred_count))
+    pct=$((safe_count * 100 / total))
+    log INFO "FR coverage: ${safe_count}/${total} (${pct}%) — threshold: 80%"
+
     echo '<!-- REQUIREMENTS_FORCE_SKIPPED -->' >> "$tasks_file"
     git -C "$repo_root" add "$tasks_file" "$findings_file" && \
     git -C "$repo_root" commit -m "chore($epic_num): requirements verification halted" --no-verify 2>/dev/null || true
 
     if [[ "$REQUIREMENTS_FORCE_SKIP_ALLOWED" == "true" ]]; then
-        echo '<!-- REQUIREMENTS_VERIFIED -->' >> "$tasks_file"
-        git -C "$repo_root" add "$tasks_file" && \
-        git -C "$repo_root" commit -m "chore($epic_num): requirements force-advanced" --no-verify 2>/dev/null || true
-        log WARN "Requirements verification force-advanced (--allow-requirements-skip)"
-        return 0
+        if [[ $pct -ge 80 ]]; then
+            log WARN "FR coverage above 80% — auto-advancing despite gaps"
+            # Write audit trail for force-skipped findings
+            local skip_text
+            skip_text=$(grep -E ': (NOT_FOUND|PARTIAL)' "$findings_file" 2>/dev/null || true)
+            local skip_count
+            skip_count=$((partial_count + not_found_count))
+            if type _write_force_skip_audit &>/dev/null; then
+                _write_force_skip_audit "$repo_root" "requirements-verification" \
+                    "$epic_num" "$short_name" "$skip_count" "$skip_text" "WARN"
+            fi
+            echo '<!-- REQUIREMENTS_VERIFIED -->' >> "$tasks_file"
+            git -C "$repo_root" add "$tasks_file" && \
+            git -C "$repo_root" commit -m "chore($epic_num): requirements force-advanced (${pct}%)" --no-verify 2>/dev/null || true
+            log WARN "Requirements verification force-advanced (--allow-requirements-skip)"
+            return 0
+        else
+            log ERROR "FR coverage below 80% — halting"
+            return 1
+        fi
     fi
 
     return 1

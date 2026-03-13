@@ -10,6 +10,24 @@
 # Global side-effect: accumulated warnings across CI-fix rounds
 CI_FIX_WARNINGS=""
 
+# Severity threshold: CRITICAL | HIGH | MEDIUM | LOW — halt if findings >= this level
+SECURITY_MIN_SEVERITY_TO_HALT="${SECURITY_MIN_SEVERITY_TO_HALT:-HIGH}"
+
+# Whether CI force-skip is allowed after max rounds
+CI_FORCE_SKIP_ALLOWED="${CI_FORCE_SKIP_ALLOWED:-true}"
+
+# ─── Severity classification helper ──────────────────────────────────────
+
+_classify_security_severity() {
+    local findings_file="$1"
+    local critical_count high_count medium_count low_count
+    critical_count=$(grep -c '\*\*Severity\*\*: CRITICAL' "$findings_file" 2>/dev/null) || critical_count=0
+    high_count=$(grep -c '\*\*Severity\*\*: HIGH' "$findings_file" 2>/dev/null) || high_count=0
+    medium_count=$(grep -c '\*\*Severity\*\*: MEDIUM' "$findings_file" 2>/dev/null) || medium_count=0
+    low_count=$(grep -c '\*\*Severity\*\*: LOW' "$findings_file" 2>/dev/null) || low_count=0
+    echo "$critical_count $high_count $medium_count $low_count"
+}
+
 # ─── Security Gate (review→fix loop) ─────────────────────────────────────
 
 _run_security_gate() {
@@ -101,6 +119,23 @@ SEOF
     if [[ -f "$tasks_file" ]]; then
         if [[ "$verdict" != "PASS" ]] && [[ $round -ge $max_rounds ]]; then
             if [[ "${SECURITY_FORCE_SKIP_ALLOWED:-false}" == "true" ]]; then
+                # Before force-skipping, check severity
+                local severities
+                severities=$(_classify_security_severity "$findings_file")
+                local crit high med low
+                read -r crit high med low <<< "$severities"
+
+                if [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "HIGH" ]] && (( crit + high > 0 )); then
+                    log ERROR "HIGH/CRITICAL security findings ($crit critical, $high high) — halting regardless of SECURITY_FORCE_SKIP_ALLOWED"
+                    return 1
+                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "CRITICAL" ]] && (( crit > 0 )); then
+                    log ERROR "CRITICAL security findings ($crit) — halting"
+                    return 1
+                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "LOW" ]] && (( crit + high + med + low > 0 )); then
+                    log ERROR "Security findings present ($crit critical, $high high, $med medium, $low low) — halting (MIN_SEVERITY=LOW)"
+                    return 1
+                fi
+
                 log WARN "Security gate: issues remain after $max_rounds rounds — force-advancing (--allow-security-skip)"
                 echo "" >> "$tasks_file"
                 echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
@@ -144,6 +179,16 @@ _run_verify_ci_gate() {
     if [[ -f "$tasks_file" ]] && grep -q '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file" 2>/dev/null; then
         log INFO "verify-ci already complete — skipping"
         return 0
+    fi
+
+    # Resume guard: if previously force-skipped, auto-advance if allowed
+    if grep -q '<!-- VERIFY_CI_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
+        if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+            log INFO "CI gate previously force-skipped — advancing"
+            grep -q '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file" 2>/dev/null || \
+                echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+            return 0
+        fi
     fi
 
     # Fast-path: no CI capabilities configured — auto-pass
@@ -225,11 +270,16 @@ _run_verify_ci_gate() {
         (cd "$repo_root" && git add "$tasks_file" && \
          git commit -m "$commit_msg" 2>/dev/null || true)
     else
-        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
-        echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
-        log WARN "CI still failing after $max_rounds rounds — force-advancing"
-        (cd "$repo_root" && git add "$tasks_file" && \
-         git commit -m "chore(${epic_num}): CI verification force-skipped after $max_rounds rounds" 2>/dev/null || true)
+        if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+            echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+            echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+            log WARN "CI still failing after $max_rounds rounds — force-advancing"
+            (cd "$repo_root" && git add "$tasks_file" && \
+             git commit -m "chore(${epic_num}): CI verification force-skipped after $max_rounds rounds" 2>/dev/null || true)
+        else
+            log ERROR "CI still failing after $max_rounds rounds — halting (CI_FORCE_SKIP_ALLOWED=false)"
+            return 1
+        fi
     fi
     return 0
 }

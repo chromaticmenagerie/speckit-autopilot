@@ -179,6 +179,60 @@ rc=0
 check_fr_coverage "$spec_dir" 2>/dev/null || rc=$?
 assert_eq "0" "$rc" "returns 0 with duplicate FRs all covered"
 
+# ─── Test: PARTIAL vs NOT_FOUND classification in requirements findings ────
+
+echo "Test: PARTIAL and NOT_FOUND are classified separately in findings"
+
+findings_dir="$TMPDIR/findings-classify"
+mkdir -p "$findings_dir"
+
+cat > "$findings_dir/requirement-findings.md" <<'EOF'
+# Requirement Verification Findings
+FR-001: PASS
+FR-002: PARTIAL
+FR-003: NOT_FOUND
+FR-004: PASS
+FR-005: DEFERRED
+EOF
+
+findings_file="$findings_dir/requirement-findings.md"
+
+has_not_found=false
+has_partial=false
+grep -qE ': NOT_FOUND' "$findings_file" && has_not_found=true
+grep -qE ': PARTIAL' "$findings_file" && has_partial=true
+assert_eq "true" "$has_not_found" "NOT_FOUND detected"
+assert_eq "true" "$has_partial" "PARTIAL detected"
+
+# Verify counts
+pass_count=$(grep -c ': PASS' "$findings_file" 2>/dev/null || echo 0)
+partial_count=$(grep -c ': PARTIAL' "$findings_file" 2>/dev/null || echo 0)
+deferred_count=$(grep -c ': DEFERRED' "$findings_file" 2>/dev/null || echo 0)
+not_found_count=$(grep -c ': NOT_FOUND' "$findings_file" 2>/dev/null || echo 0)
+total=$((pass_count + partial_count + deferred_count + not_found_count))
+safe_count=$((pass_count + partial_count + deferred_count))
+pct=$((safe_count * 100 / total))
+
+assert_eq "2" "$pass_count" "pass_count=2"
+assert_eq "1" "$partial_count" "partial_count=1"
+assert_eq "1" "$deferred_count" "deferred_count=1"
+assert_eq "1" "$not_found_count" "not_found_count=1"
+assert_eq "80" "$pct" "coverage pct=80 (4/5)"
+
+echo "Test: all-PASS findings have no NOT_FOUND or PARTIAL"
+
+cat > "$findings_dir/requirement-findings.md" <<'EOF'
+FR-001: PASS
+FR-002: PASS
+EOF
+
+has_not_found=false
+has_partial=false
+grep -qE ': NOT_FOUND' "$findings_dir/requirement-findings.md" && has_not_found=true
+grep -qE ': PARTIAL' "$findings_dir/requirement-findings.md" && has_partial=true
+assert_eq "false" "$has_not_found" "no NOT_FOUND in all-PASS"
+assert_eq "false" "$has_partial" "no PARTIAL in all-PASS"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""

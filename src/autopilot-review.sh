@@ -185,6 +185,8 @@ _tiered_review() {
         _emit_event "$events_log" "review_all_tiers_failed" "{}"
         # Apply existing FORCE_ADVANCE_ON_REVIEW_ERROR logic
         if [[ "${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}" == "true" ]]; then
+            local _tasks_file="$repo_root/specs/$short_name/tasks.md"
+            [[ -f "$_tasks_file" ]] && echo "<!-- REVIEW_FORCE_SKIPPED -->" >> "$_tasks_file"
             log WARN "All review tiers failed — force-advancing (FORCE_ADVANCE_ON_REVIEW_ERROR=true)"
             return 0
         fi
@@ -254,8 +256,21 @@ _review_fix_loop() {
         # Stall detection: identical issue counts for CONVERGENCE_STALL_ROUNDS rounds
         if _check_stall "${_issue_counts[*]}" "${CONVERGENCE_STALL_ROUNDS:-2}"; then
             if [[ "${FORCE_ADVANCE_ON_REVIEW_STALL:-false}" == "true" ]]; then
+                local _initial=${_issue_counts[0]:-0}
+                local _remaining=${_issue_counts[-1]:-0}
+                # Block if BOTH conditions are bad: many issues AND poor resolution rate
+                if (( _remaining > ${STALL_ADVANCE_MAX_ISSUES:-5} )) && \
+                   (( _initial > 0 )) && \
+                   (( _remaining * 100 / _initial > ${STALL_ADVANCE_MAX_REMAINING_PCT:-50} )); then
+                    log WARN "Stall detected but too many unresolved issues ($_remaining/$_initial) — halting despite FORCE_ADVANCE_ON_REVIEW_STALL"
+                    _emit_event "$events_log" "review_convergence_complete" \
+                        "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"halted_stall_too_many\"}"
+                    return 1
+                fi
+                local _tasks_file="$repo_root/specs/$short_name/tasks.md"
+                [[ -f "$_tasks_file" ]] && echo "<!-- REVIEW_FORCE_SKIPPED -->" >> "$_tasks_file"
                 LAST_CR_STATUS="force-advanced (stall, tier: $tier, round $attempt)"
-                log WARN "Stalled — force-advancing"
+                log WARN "Stalled — force-advancing ($_remaining issues remaining from $_initial initial)"
                 _emit_event "$events_log" "review_convergence_complete" \
                     "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"force_advanced_stall\"}"
                 return 3
@@ -267,13 +282,22 @@ _review_fix_loop() {
             return 1
         fi
 
-        # Early exit: diminishing returns after 2+ rounds
-        if [[ "${FORCE_ADVANCE_ON_DIMINISHING_RETURNS:-false}" == "true" ]] && [[ $attempt -ge ${DIMINISHING_RETURNS_THRESHOLD:-3} ]]; then
-            LAST_CR_STATUS="force-advanced (diminishing returns, tier: $tier, round $attempt)"
-            log WARN "Force-advancing after $attempt rounds (diminishing returns)"
-            _emit_event "$events_log" "review_convergence_complete" \
-                "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"force_advanced_diminishing\"}"
-            return 3
+        # Early exit: diminishing returns — rate-of-change analysis
+        if [[ "${FORCE_ADVANCE_ON_DIMINISHING_RETURNS:-false}" == "true" ]] && (( attempt >= ${DIMINISHING_RETURNS_THRESHOLD:-3} )); then
+            local prev_count=${_issue_counts[$((attempt - 2))]:-0}
+            local curr_count=${_issue_counts[$((attempt - 1))]:-0}
+            if (( prev_count > 0 )); then
+                local improvement_pct=$(( (prev_count - curr_count) * 100 / prev_count ))
+                if (( improvement_pct < 20 )); then
+                    local _tasks_file="$repo_root/specs/$short_name/tasks.md"
+                    [[ -f "$_tasks_file" ]] && echo "<!-- REVIEW_FORCE_SKIPPED -->" >> "$_tasks_file"
+                    LAST_CR_STATUS="force-advanced (diminishing returns, tier: $tier, round $attempt)"
+                    log WARN "Diminishing returns: ${improvement_pct}% improvement (< 20% threshold) — force-advancing"
+                    _emit_event "$events_log" "review_convergence_complete" \
+                        "{\"tier\":\"$tier\",\"rounds_used\":$attempt,\"result\":\"force_advanced_diminishing\"}"
+                    return 3
+                fi
+            fi
         fi
 
         # ─ CLAUDE FIX ─
@@ -291,6 +315,8 @@ _review_fix_loop() {
 
     # After max_rounds exhausted
     if [[ "${FORCE_ADVANCE_ON_REVIEW_ERROR:-false}" == "true" ]]; then
+        local _tasks_file="$repo_root/specs/$short_name/tasks.md"
+        [[ -f "$_tasks_file" ]] && echo "<!-- REVIEW_FORCE_SKIPPED -->" >> "$_tasks_file"
         LAST_CR_STATUS="force-advanced (issues remain after $max_rounds rounds, tier: $tier)"
         log WARN "Issues remain after $max_rounds rounds — force-advancing"
         _emit_event "$events_log" "review_convergence_complete" \
