@@ -14,6 +14,106 @@ LAST_TEST_OUTPUT=""
 LAST_LINT_OUTPUT=""
 LAST_BUILD_OUTPUT=""
 
+# Last secret scan tier: 0=clean, 1=Tier 1 (provider, must halt), 2=Tier 2 (generic, fix loop)
+LAST_SECRET_SCAN_TIER=0
+
+# Default Tier 1 rule IDs (provider-prefixed, zero/near-zero false positives)
+_DEFAULT_TIER1_RULES="aws-access-token|gcp-service-account|gcp-api-key|digitalocean-pat|cloudflare-origin-ca-key|private-key|age-secret-key|github-pat|github-fine-grained-pat|github-app-token|github-oauth|github-refresh-token|gitlab-pat|gitlab-ptt|gitlab-runner-authentication-token|stripe-access-token|slack-bot-token|slack-user-token|slack-webhook-url|openai-api-key|anthropic-api-key|anthropic-admin-api-key|sendgrid-api-token|npm-access-token|pypi-upload-token|shopify-access-token"
+
+# Verify secrets via gitleaks. Returns 0 on pass/skip, 1 on Tier 1 finding.
+# Side effect: sets LAST_SECRET_SCAN_TIER.
+verify_secrets() {
+    local repo_root="$1"
+    LAST_SECRET_SCAN_TIER=0
+
+    if [[ -z "${PROJECT_SECRET_SCAN_CMD:-}" ]]; then
+        return 0
+    fi
+
+    log INFO "Running secret scan: gitleaks"
+
+    local report
+    report=$(mktemp "${TMPDIR:-/tmp}/autopilot-gitleaks-XXXXXX.json")
+
+    # Determine scan scope
+    local scan_mode="${PROJECT_SECRET_SCAN_MODE:-branch}"
+    local changed_files=""
+    if [[ "$scan_mode" == "branch" ]]; then
+        changed_files=$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT \
+            "${MERGE_TARGET:-main}..HEAD" 2>/dev/null || true)
+    fi
+
+    # Run gitleaks from repo root with positional path argument
+    local gl_rc=0
+    (cd "$repo_root" && run_with_timeout 60 gitleaks dir \
+        --report-format json --report-path "$report" \
+        --redact --exit-code 2 --max-decode-depth=1 .) || gl_rc=$?
+
+    # Exit code: 0=clean, 2=findings, 1=error
+    if [[ $gl_rc -eq 1 ]] || [[ $gl_rc -eq 124 ]]; then
+        log WARN "Gitleaks error or timeout (exit $gl_rc) — graceful skip"
+        rm -f "$report"
+        return 0
+    fi
+
+    if [[ ! -f "$report" ]]; then
+        log WARN "Gitleaks report not generated — graceful skip"
+        return 0
+    fi
+
+    if [[ $gl_rc -eq 0 ]]; then
+        log OK "Secret scan clean"
+        rm -f "$report"
+        return 0
+    fi
+
+    # gl_rc == 2: findings found — parse and classify
+    local findings
+    findings=$(<"$report")
+    rm -f "$report"
+
+    # Branch-mode post-filter: only include findings in changed files
+    if [[ "$scan_mode" == "branch" ]] && [[ -n "$changed_files" ]]; then
+        local filtered
+        filtered=$(echo "$findings" | jq --arg files "$changed_files" '
+            ($files | split("\n") | map(select(. != ""))) as $cf |
+            [.[] | select(.File as $f | $cf | any(. == $f))]
+        ' 2>/dev/null) || filtered="$findings"
+        findings="$filtered"
+    fi
+
+    # Check if any findings remain after filtering
+    local finding_count
+    finding_count=$(echo "$findings" | jq 'length' 2>/dev/null) || finding_count=0
+    if [[ "$finding_count" -eq 0 ]]; then
+        log OK "Secret scan clean (branch-filtered)"
+        return 0
+    fi
+
+    # Classify findings against Tier 1 rules
+    local tier1_rules="${PROJECT_SECRET_TIER1_RULES:-$_DEFAULT_TIER1_RULES}"
+    local tier1_count
+    tier1_count=$(echo "$findings" | jq --arg rules "$tier1_rules" '
+        ($rules | split("|")) as $t1 |
+        [.[] | select(.RuleID as $r | $t1 | any(. == $r))] | length
+    ' 2>/dev/null) || tier1_count=0
+
+    if [[ "$tier1_count" -gt 0 ]]; then
+        LAST_SECRET_SCAN_TIER=1
+        log CRITICAL "Tier 1 provider secret detected ($tier1_count finding(s)) — HALT"
+        log ERROR "Rotate the secret(s) and remove from git history."
+        echo "$findings" | jq -r '.[] | "  \(.RuleID): \(.File):\(.StartLine)"' 2>/dev/null || true
+        return 1
+    fi
+
+    # Only Tier 2 findings
+    LAST_SECRET_SCAN_TIER=2
+    log WARN "Tier 2 secret findings ($finding_count) — entering fix loop"
+    LAST_CI_OUTPUT="=== STEP: Secret Scan === FAIL (Tier 2 findings)"$'\n'
+    LAST_CI_OUTPUT+=$(echo "$findings" | jq -r '.[] | "  \(.RuleID): \(.File):\(.StartLine) — \(.Match)"' 2>/dev/null || true)
+    return 0
+}
+
 # Verify that tests pass. Returns 0 on success, 1 on failure.
 # Side effect: sets LAST_TEST_OUTPUT with the captured output.
 verify_tests() {
@@ -41,13 +141,39 @@ verify_tests() {
 
     # Detect unconditional test stubs/skips (multi-language)
     if [[ "$enforcement" != "off" ]]; then
+        # Branch-scoped skip detection: only scan files changed in this branch
+        local changed_files=""
+        if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            changed_files=$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT \
+                "${MERGE_TARGET:-main}..HEAD" 2>/dev/null || true)
+        fi
+
         local skip_files=""
         case "${PROJECT_LANG:-unknown}" in
             Go)
-                skip_files=$(find "$repo_root" -name '*_test.go' \
-                    -not -path '*/vendor/*' -not -path '*/.git/*' \
-                    -not -path '*/node_modules/*' -not -path '*/third_party/*' \
-                    -exec awk '
+                if [[ -n "$changed_files" ]]; then
+                    # Filter to only branch-changed *_test.go files
+                    local go_test_files
+                    go_test_files=$(echo "$changed_files" | grep '_test\.go$' || true)
+                    if [[ -n "$go_test_files" ]]; then
+                        skip_files=$(echo "$go_test_files" | while read -r f; do
+                            [[ -f "$repo_root/$f" ]] && echo "$repo_root/$f"
+                        done | xargs -r awk '
+/^func Test[A-Za-z0-9_]*\(/ { in_test=1; found_first=0; next }
+in_test && /^}/ { in_test=0; next }
+in_test && !found_first && /^\t[^\t ]/ {
+    found_first=1
+    if (/^\tt\.(Skip|Skipf|SkipNow)\(/) {
+        print FILENAME ":" NR ": " $0
+    }
+}
+' 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                    fi
+                else
+                    skip_files=$(find "$repo_root" -name '*_test.go' \
+                        -not -path '*/vendor/*' -not -path '*/.git/*' \
+                        -not -path '*/node_modules/*' -not -path '*/third_party/*' \
+                        -exec awk '
 /^func Test[A-Za-z0-9_]*\(/ { in_test=1; found_first=0; next }
 in_test && /^}/ { in_test=0; next }
 in_test && !found_first && /^\t[^\t ]/ {
@@ -57,27 +183,70 @@ in_test && !found_first && /^\t[^\t ]/ {
     }
 }
 ' {} + 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                fi
                 ;;
             Python)
-                skip_files=$(grep -rnE '@pytest\.mark\.skip\b' "$repo_root" \
-                    --include='test_*.py' --include='*_test.py' \
-                    --exclude-dir=vendor --exclude-dir=.git \
-                    --exclude-dir=node_modules --exclude-dir=__pycache__ \
-                    --exclude-dir=third_party 2>/dev/null | grep -v '#.*speckit:allow-skip' || true)
+                if [[ -n "$changed_files" ]]; then
+                    local py_test_files
+                    py_test_files=$(echo "$changed_files" | grep -E '(^|/)test_.*\.py$|_test\.py$' || true)
+                    if [[ -n "$py_test_files" ]]; then
+                        local abs_py_files
+                        abs_py_files=$(echo "$py_test_files" | while read -r f; do
+                            [[ -f "$repo_root/$f" ]] && echo "$repo_root/$f"
+                        done)
+                        if [[ -n "$abs_py_files" ]]; then
+                            skip_files=$(echo "$abs_py_files" | xargs grep -nE '@pytest\.mark\.skip\b' 2>/dev/null | grep -v '#.*speckit:allow-skip' || true)
+                        fi
+                    fi
+                else
+                    skip_files=$(grep -rnE '@pytest\.mark\.skip\b' "$repo_root" \
+                        --include='test_*.py' --include='*_test.py' \
+                        --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=node_modules --exclude-dir=__pycache__ \
+                        --exclude-dir=third_party 2>/dev/null | grep -v '#.*speckit:allow-skip' || true)
+                fi
                 ;;
             Node/JS/TS|Node-Monorepo)
-                skip_files=$(grep -rnE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' "$repo_root" \
-                    --include='*.test.ts' --include='*.test.js' --include='*.test.tsx' \
-                    --include='*.test.jsx' --include='*.spec.ts' --include='*.spec.js' \
-                    --exclude-dir=vendor --exclude-dir=.git \
-                    --exclude-dir=node_modules --exclude-dir=dist \
-                    --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                if [[ -n "$changed_files" ]]; then
+                    local node_test_files
+                    node_test_files=$(echo "$changed_files" | grep -E '\.(test|spec)\.(ts|js|tsx|jsx)$' || true)
+                    if [[ -n "$node_test_files" ]]; then
+                        local abs_node_files
+                        abs_node_files=$(echo "$node_test_files" | while read -r f; do
+                            [[ -f "$repo_root/$f" ]] && echo "$repo_root/$f"
+                        done)
+                        if [[ -n "$abs_node_files" ]]; then
+                            skip_files=$(echo "$abs_node_files" | xargs grep -nE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                        fi
+                    fi
+                else
+                    skip_files=$(grep -rnE '^\s*(it|test|describe)\.skip\s*\(|^\s*x(it|describe|test)\s*\(|^\s*(it|test)\.todo\s*\(' "$repo_root" \
+                        --include='*.test.ts' --include='*.test.js' --include='*.test.tsx' \
+                        --include='*.test.jsx' --include='*.spec.ts' --include='*.spec.js' \
+                        --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=node_modules --exclude-dir=dist \
+                        --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                fi
                 ;;
             Rust)
-                skip_files=$(grep -rnE '#\[ignore\]' "$repo_root" \
-                    --include='*.rs' \
-                    --exclude-dir=vendor --exclude-dir=.git \
-                    --exclude-dir=target --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                if [[ -n "$changed_files" ]]; then
+                    local rust_files
+                    rust_files=$(echo "$changed_files" | grep '\.rs$' || true)
+                    if [[ -n "$rust_files" ]]; then
+                        local abs_rust_files
+                        abs_rust_files=$(echo "$rust_files" | while read -r f; do
+                            [[ -f "$repo_root/$f" ]] && echo "$repo_root/$f"
+                        done)
+                        if [[ -n "$abs_rust_files" ]]; then
+                            skip_files=$(echo "$abs_rust_files" | xargs grep -nE '#\[ignore\]' 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                        fi
+                    fi
+                else
+                    skip_files=$(grep -rnE '#\[ignore\]' "$repo_root" \
+                        --include='*.rs' \
+                        --exclude-dir=vendor --exclude-dir=.git \
+                        --exclude-dir=target --exclude-dir=third_party 2>/dev/null | grep -v '//.*speckit:allow-skip' || true)
+                fi
                 ;;
             *)
                 # Unknown/Makefile — skip stub detection (no reliable pattern)
@@ -183,6 +352,17 @@ verify_ci() {
 
     # Path B: Compose pipeline from detected capabilities
     log INFO "Composing CI pipeline from detected capabilities"
+
+    # Step 0: Secret scanning (before any other checks — Path B only)
+    if [[ -n "${PROJECT_SECRET_SCAN_CMD:-}" ]]; then
+        if ! verify_secrets "$repo_root"; then
+            if [[ "${LAST_SECRET_SCAN_TIER:-0}" -eq 1 ]]; then
+                LAST_CI_OUTPUT="=== STEP: Secret Scan === HALT (Tier 1 provider secret detected)"
+            fi
+            rm -f "$tmpfile"; return 1
+        fi
+    fi
+
 
     # Step 1: Frontend dependency install (if needed)
     if [[ -n "${PROJECT_FE_INSTALL_CMD:-}" ]] && [[ -n "${PROJECT_FE_DIR:-}" ]]; then
