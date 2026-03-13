@@ -32,7 +32,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 log() { :; }
 
 # Extract _ensure_gitignore_logs from detect-project
-eval "$(sed -n '/^_ensure_gitignore_logs()/,/^}/p' "$SRC_DIR/autopilot-detect-project.sh")"
+eval "$(sed -n '/^_ensure_gitignore_logs()/,/^}/p' "$SRC_DIR/autopilot-detect-tools.sh")"
 
 # ─── Test: no .gitignore → creates file with entry ─────────────────────────
 

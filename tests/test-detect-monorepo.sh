@@ -34,7 +34,7 @@ log() { :; }
 # Extract detection functions from detect-project
 extract_func() {
     local func="$1"
-    sed -n "/^${func}()/,/^}/p" "$SRC_DIR/autopilot-detect-project.sh"
+    sed -n "/^${func}()/,/^}/p" "$SRC_DIR/autopilot-detect-tools.sh"
 }
 
 eval "$(extract_func detect_node_monorepo)"
