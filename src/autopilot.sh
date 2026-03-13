@@ -131,7 +131,7 @@ SILENT=false
 NO_GITHUB=false
 GITHUB_RESYNC=false
 STRICT_DEPS=false
-ALLOW_DEFERRED=false
+ALLOW_DEFERRED="${ALLOW_DEFERRED:-true}"
 SKIP_CODERABBIT=false
 SKIP_REVIEW=false
 SECURITY_FORCE_SKIP_ALLOWED=false
@@ -1202,11 +1202,29 @@ run_epic() {
                 printf '\n<!-- FORCE_DEFERRED: Phase %s (%d tasks) after %d implement attempts -->\n' \
                     "$stuck_phase" "$deferred_count" "$retries" >> "$spec_dir/tasks.md"
 
-                # Track cascading deferrals
+                # Track cascading deferrals (graduated threshold — max_iter is backstop)
                 consecutive_deferred=$((consecutive_deferred + 1))
-                if [[ $consecutive_deferred -ge 2 ]]; then
-                    log ERROR "2 consecutive phases deferred — stopping to avoid token burn. Resume with: ./autopilot.sh $epic_num --allow-deferred"
-                    return 1
+                if [[ $consecutive_deferred -ge 5 ]]; then
+                    log WARN "5 consecutive phases deferred — force-forward, logging and resetting counter"
+                    # Log to deferred-phases.log
+                    local defer_log="$repo_root/.specify/logs/deferred-phases.log"
+                    mkdir -p "$(dirname "$defer_log")"
+                    printf '%s  FORCE-FORWARD  epic=%s  phase=%s  consecutive=%d  retries=%d\n' \
+                        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$epic_num" "$stuck_phase" "$consecutive_deferred" "$retries" \
+                        >> "$defer_log"
+                    # Log to skipped-findings.md
+                    local skip_md="$spec_dir/skipped-findings.md"
+                    {
+                        printf '## Force-Forward at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                        printf '- Phase: %s\n' "$stuck_phase"
+                        printf '- Consecutive deferrals: %d\n' "$consecutive_deferred"
+                        printf '- Implement retries: %d\n\n' "$retries"
+                    } >> "$skip_md"
+                    consecutive_deferred=0
+                elif [[ $consecutive_deferred -eq 4 ]]; then
+                    log WARN "4 consecutive phases deferred — force-forward imminent"
+                elif [[ $consecutive_deferred -eq 3 ]]; then
+                    log WARN "3 consecutive phases deferred — continuing"
                 fi
 
                 git -C "$repo_root" add "$spec_dir/tasks.md" && \
@@ -1226,8 +1244,6 @@ run_epic() {
 # ─── Entry Point ─────────────────────────────────────────────────────────────
 
 main() {
-    parse_args "$@"
-
     # Preflight: jq required for stream-json processing
     if ! command -v jq >/dev/null 2>&1; then
         echo "ERROR: jq is required for autopilot observability. Install: sudo apt install jq" >&2
@@ -1239,6 +1255,9 @@ main() {
     REPO_ROOT="$repo_root"
     init_logging "$repo_root"
     load_project_config "$repo_root"
+
+    # CLI args parsed AFTER project config so flags override project.env
+    parse_args "$@"
 
     # Preflight: verify project tools are available
     verify_preflight_tools "$repo_root" || exit 1
