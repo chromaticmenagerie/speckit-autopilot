@@ -497,15 +497,38 @@ _detect_test_modifications() {
     # Check committed changes
     local modified_tests
     modified_tests=$(git -C "$repo_root" diff --name-only "$head_before"..HEAD | \
-        grep -E '_test\.(go|ts|js|py)$|\.test\.(ts|js)$|\.spec\.(ts|js)$' || true)
+        grep -E '_test\.(go|ts|js|py)$|\.test\.(ts|js)$|\.spec\.(ts|js)$|(^|/)test_[^/]*\.py$' || true)
 
     # Also check uncommitted changes (staged + unstaged)
     local dirty_tests
     dirty_tests=$(git -C "$repo_root" diff --name-only HEAD | \
-        grep -E '_test\.(go|ts|js|py)$|\.test\.(ts|js)$|\.spec\.(ts|js)$' || true)
+        grep -E '_test\.(go|ts|js|py)$|\.test\.(ts|js)$|\.spec\.(ts|js)$|(^|/)test_[^/]*\.py$' || true)
 
     local all_tests="${modified_tests}${dirty_tests:+$'\n'$dirty_tests}"
     [[ -z "$all_tests" ]] && return 0
+
+    # Language-specific assertion patterns and file pathspecs
+    local assertion_pattern
+    local pathspecs
+    case "${PROJECT_LANG:-unknown}" in
+        Go)
+            assertion_pattern='assert\.|require\.|expect\(|t\.(Fatal|Fatalf|Error|Errorf|FailNow)\('
+            pathspecs=('*_test.go' '**/testutil/*.go' '**/test_helpers/*.go')
+            ;;
+        Python)
+            assertion_pattern='self\.assert[A-Z]|pytest\.raises'
+            pathspecs=('*_test.py' 'test_*.py' '**/conftest.py')
+            ;;
+        Node/JS/TS|Node-Monorepo)
+            assertion_pattern='assert\.|require\.|expect\('
+            pathspecs=('*.test.ts' '*.test.js' '*.spec.ts' '*.spec.js')
+            ;;
+        # Rust) — deferred: add *.rs pathspecs + assert!/assert_eq! patterns when first Rust project onboards
+        *)
+            assertion_pattern='assert\.|require\.|expect\(|t\.(Fatal|Fatalf|Error|Errorf|FailNow)\(|self\.assert[A-Z]|pytest\.raises'
+            pathspecs=('*_test.go' '*.test.ts' '*.test.js' '*.spec.ts' '*.spec.js' '*_test.py' 'test_*.py' '**/testutil/*.go' '**/test_helpers/*.go' '**/conftest.py')
+            ;;
+    esac
 
     # Count assertion additions vs deletions using aggregate diff
     # Uses expanded pathspecs to include testutil helper files (prevents false halts
@@ -514,13 +537,11 @@ _detect_test_modifications() {
     local assertion_added=0 assertion_removed=0
     if [[ -n "$all_tests" ]]; then
         assertion_added=$(git -C "$repo_root" diff "$head_before"..HEAD -- \
-            '*_test.go' '*.test.ts' '*.test.js' '*.spec.ts' '*.spec.js' \
-            '**/testutil/*.go' '**/test_helpers/*.go' | \
-            grep -cE '^\+.*(assert\.|require\.|expect\(|t\.(Fatal|Fatalf|Error|Errorf|FailNow)\()' || true)
+            "${pathspecs[@]}" | \
+            grep -cE "^\+.*($assertion_pattern)" || true)
         assertion_removed=$(git -C "$repo_root" diff "$head_before"..HEAD -- \
-            '*_test.go' '*.test.ts' '*.test.js' '*.spec.ts' '*.spec.js' \
-            '**/testutil/*.go' '**/test_helpers/*.go' | \
-            grep -cE '^\-.*(assert\.|require\.|expect\(|t\.(Fatal|Fatalf|Error|Errorf|FailNow)\()' || true)
+            "${pathspecs[@]}" | \
+            grep -cE "^\-.*($assertion_pattern)" || true)
     fi
 
     if [[ "$assertion_removed" -gt "$assertion_added" ]]; then
