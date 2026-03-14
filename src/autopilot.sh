@@ -80,6 +80,23 @@ _emit_clarify_summary() {
         >> "$events_log"
 }
 
+# Emit an analyze_summary event to the events log.
+# Args: repo_root epic_num rounds verify_rejections force_advanced
+_emit_analyze_summary() {
+    local repo_root="$1" epic_num="$2" rounds="$3" verify_rejections="$4" force_advanced="$5"
+    local events_log="$repo_root/.specify/logs/events.jsonl"
+    mkdir -p "$(dirname "$events_log")"
+    jq -nc \
+        --arg event "analyze_summary" \
+        --arg epic "$epic_num" \
+        --argjson rounds "${rounds:-0}" \
+        --argjson verify_rejections "${verify_rejections:-0}" \
+        --argjson force_advanced "${force_advanced:-false}" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{event:$event, epic:$epic, rounds:$rounds, verify_rejections:$verify_rejections, force_advanced:$force_advanced, timestamp:$ts}' \
+        >> "$events_log"
+}
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 OPUS="opus"
@@ -778,6 +795,7 @@ run_epic() {
     local force_skip_cascade_limit=${FORCE_SKIP_CASCADE_LIMIT:-3}
     local prev_tasks_hash="" prev_commit_sha="" same_hash_count=0 oscillation_stalled=false outer_prev_state=""
     local clarify_total_rounds=0 clarify_cycle=1 clarify_cv_rejections=0
+    local analyze_total_rounds=0 analyze_cycle=1 analyze_verify_rejections=0
 
     while true; do
         total_iterations=$((total_iterations + 1))
@@ -1034,6 +1052,17 @@ run_epic() {
                         _emit_clarify_summary "$repo_root" "$epic_num" "$clarify_total_rounds" "$clarify_cv_rejections" "false"
                     fi
 
+                    # Track analyze-verify → analyze rejection cycle
+                    if [[ "$prev_state" == "analyze-verify" ]] && [[ "$new_state" == "analyze" ]]; then
+                        ((analyze_cycle++))
+                        ((analyze_verify_rejections++))
+                    fi
+
+                    # Emit analyze_summary when analyze+verify is complete (advances past verify)
+                    if [[ "$prev_state" == "analyze-verify" ]] && [[ "$new_state" != "analyze" ]]; then
+                        _emit_analyze_summary "$repo_root" "$epic_num" "$analyze_total_rounds" "$analyze_verify_rejections" "false"
+                    fi
+
                     # After tasks phase: create task issues
                     if [[ "$prev_state" == "tasks" ]] && $GH_ENABLED; then
                         local _tf="$repo_root/specs/$short_name/tasks.md"
@@ -1046,7 +1075,10 @@ run_epic() {
                     if [[ "$state" == "clarify" ]]; then
                         ((clarify_total_rounds++))
                         log INFO "${state^} round $retries/${PHASE_MAX_RETRIES[$state]:-8} (cycle $clarify_cycle, total round $clarify_total_rounds) — observations remain, re-running in fresh context"
-                    elif [[ "$state" == "analyze" || "$state" == "analyze-verify" ]]; then
+                    elif [[ "$state" == "analyze" ]]; then
+                        ((analyze_total_rounds++))
+                        log INFO "${state^} round $retries/${PHASE_MAX_RETRIES[$state]:-5} (cycle $analyze_cycle, total round $analyze_total_rounds) — observations remain, re-running in fresh context"
+                    elif [[ "$state" == "analyze-verify" ]]; then
                         log INFO "${state^} round $retries/${PHASE_MAX_RETRIES[$state]:-5} — observations remain, re-running in fresh context"
                     else
                         log WARN "Phase $state did not advance (attempt $((retries))/${PHASE_MAX_RETRIES[$state]:-3}, exit=$phase_exit)"
@@ -1102,6 +1134,7 @@ run_epic() {
                 fi
                 git -C "$repo_root" add "$spec_dir/tasks.md" && \
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance analyze after ${retries} rounds" 2>/dev/null || true
+                _emit_analyze_summary "$repo_root" "$epic_num" "$analyze_total_rounds" "$analyze_verify_rejections" "true"
                 _accumulate_phase_cost "$repo_root"
                 continue
             elif [[ "$state" == "analyze-verify" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
@@ -1114,6 +1147,7 @@ run_epic() {
                 fi
                 git -C "$repo_root" add "$spec_dir/tasks.md" && \
                 git -C "$repo_root" commit -m "chore(${epic_num}): force-advance analyze-verify after ${retries} attempts" 2>/dev/null || true
+                _emit_analyze_summary "$repo_root" "$epic_num" "$analyze_total_rounds" "$analyze_verify_rejections" "true"
                 _accumulate_phase_cost "$repo_root"
                 continue
             elif [[ "$state" == "implement" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
