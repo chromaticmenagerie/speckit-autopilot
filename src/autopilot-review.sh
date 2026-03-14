@@ -158,9 +158,9 @@ _tiered_review() {
                 # Per-tier max rounds (Decision #17)
                 local max_rounds
                 case "$tier" in
-                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-2}" ;;
-                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-2}" ;;
-                    self)   max_rounds="${CLAUDE_SELF_REVIEW_MAX_ROUNDS:-2}" ;;
+                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-2}"; [[ $max_rounds -lt 1 ]] && max_rounds=1 ;;
+                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-2}"; [[ $max_rounds -lt 1 ]] && max_rounds=1 ;;
+                    self)   max_rounds="${CLAUDE_SELF_REVIEW_MAX_ROUNDS:-2}"; [[ $max_rounds -lt 1 ]] && max_rounds=1 ;;
                     *)      max_rounds=2 ;;
                 esac
                 local loop_rc=0

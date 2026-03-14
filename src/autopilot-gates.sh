@@ -61,6 +61,7 @@ _should_halt_on_severity() {
 _run_security_gate() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
     local max_rounds=${SECURITY_MAX_ROUNDS:-3}
+    [[ $max_rounds -lt 1 ]] && max_rounds=1
     local round=0
     local spec_dir="$repo_root/specs/$short_name"
     local findings_file="$spec_dir/security-findings.md"
@@ -234,7 +235,8 @@ SEOF
 
 _run_verify_ci_gate() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
-    local max_rounds=3 round=0 ci_passed=false
+    local max_rounds=${CI_MAX_ROUNDS:-3} round=0 ci_passed=false
+    [[ $max_rounds -lt 1 ]] && max_rounds=1
     local tasks_file="$repo_root/specs/$short_name/tasks.md"
     local events_log="$repo_root/.specify/logs/events.jsonl"
 
