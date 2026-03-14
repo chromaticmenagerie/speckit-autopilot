@@ -27,6 +27,7 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 # Stubs
 log() { :; }
 run_with_timeout() { shift; "$@"; }
+_exec_in_new_pgrp() { "$@"; }
 
 # Source verify functions
 source "$SRC_DIR/autopilot-verify.sh"

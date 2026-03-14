@@ -27,6 +27,7 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 # Stubs
 log() { :; }
 run_with_timeout() { shift; "$@"; }
+_exec_in_new_pgrp() { "$@"; }
 
 # Create a mock gitleaks that outputs Tier 1 findings
 MOCK_BIN="$TMPDIR_ROOT/bin"

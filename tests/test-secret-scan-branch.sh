@@ -27,6 +27,7 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 # Stubs
 log() { :; }
 run_with_timeout() { shift; "$@"; }
+_exec_in_new_pgrp() { "$@"; }
 
 # Mock gitleaks: reports findings in BOTH old.py and new.py
 MOCK_BIN="$TMPDIR_ROOT/bin"

@@ -45,7 +45,7 @@ verify_secrets() {
 
     # Run gitleaks from repo root with positional path argument
     local gl_rc=0
-    (cd "$repo_root" && run_with_timeout 60 gitleaks dir \
+    (cd "$repo_root" && run_with_timeout 60 _exec_in_new_pgrp gitleaks dir \
         --report-format json --report-path "$report" \
         --redact --exit-code 2 --max-decode-depth=1 .) || gl_rc=$?
 
