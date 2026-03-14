@@ -463,8 +463,8 @@ _tier_claude_self_review() {
 
     local est_tokens=$(( diff_bytes / 4 ))
 
-    if [[ $est_tokens -gt 60000 ]]; then
-        log WARN "Diff too large for self-review (~${est_tokens} tokens, limit 60000) — chunking by directory"
+    if [[ $est_tokens -gt 200000 ]]; then
+        log WARN "Diff too large for self-review (~${est_tokens} tokens, limit 200000) — chunking by directory"
         _tier_claude_self_review_chunked "$repo_root" "$merge_target" "$epic_num" "$title"
         return $?
     fi
@@ -496,11 +496,15 @@ _tier_claude_self_review_chunked() {
     # Get changed first-level directories
     # First-level (backend/, frontend/, renderer/) keeps cross-cutting context together
     # and minimizes Claude invocations. Falls back to second-level only if a chunk
-    # still exceeds 60K tokens.
-    local dirs
-    dirs=$(git -C "$repo_root" diff --name-only "origin/${merge_target}...HEAD" \
+    # still exceeds 200K tokens.
+    local _all_dirs _app_dirs _infra_dirs
+    _all_dirs=$(git -C "$repo_root" diff --name-only "origin/${merge_target}...HEAD" \
         -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" \
         | cut -d'/' -f1 | sort -u)
+    _app_dirs=$(echo "$_all_dirs" | grep -vE '^\.(specify|claudes)|^(specs|docs|tests|templates|skill)$' || true)
+    _infra_dirs=$(echo "$_all_dirs" | grep -E '^\.(specify|claudes)|^(specs|docs|tests|templates|skill)$' || true)
+    local dirs
+    dirs=$(printf '%s\n%s' "$_app_dirs" "$_infra_dirs" | sed '/^$/d')
 
     local all_findings=""
     local chunk_num=0
@@ -516,7 +520,7 @@ _tier_claude_self_review_chunked() {
         chunk_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" -- "$dir" | wc -c | xargs)
         local chunk_tokens=$(( chunk_bytes / 4 ))
 
-        if [[ $chunk_tokens -gt 60000 ]]; then
+        if [[ $chunk_tokens -gt 200000 ]]; then
             # First-level chunk too large — fall back to second-level split
             log WARN "Chunk $dir too large (~${chunk_tokens} tokens) — splitting to second-level dirs"
             local subdirs
@@ -527,7 +531,7 @@ _tier_claude_self_review_chunked() {
                 local sub_bytes
                 sub_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" -- "$subdir" | wc -c | xargs)
                 local sub_tokens=$(( sub_bytes / 4 ))
-                if [[ $sub_tokens -gt 60000 ]]; then
+                if [[ $sub_tokens -gt 200000 ]]; then
                     log WARN "Sub-chunk $subdir still too large (~${sub_tokens} tokens) — skipping"
                     all_findings+="## $subdir\n\nSKIPPED: diff too large (~${sub_tokens} tokens)\n\n"
                     continue
@@ -586,6 +590,72 @@ _tier_claude_self_review_chunked() {
         return 0
     fi
     return 1
+}
+
+# ── Advisory self-review (non-blocking audit) ──────────────────────────────
+# Runs after tiered review completes. Writes findings to audit file.
+# Never blocks merge. Skips docs-only and tiny diffs.
+_advisory_self_review() {
+    local repo_root="$1" merge_target="$2" epic_num="$3" title="$4" short_name="$5" events_log="$6"
+
+    # Exemption: skip if no code changes (docs/specs/config only)
+    local changed_files
+    changed_files=$(git -C "$repo_root" diff --name-only "origin/${merge_target}...HEAD" 2>/dev/null || echo "")
+    local code_files
+    code_files=$(echo "$changed_files" | grep -vcE '\.(md|txt|rst|json|yaml|yml)$|^specs/|^\.specify/' 2>/dev/null || echo "0")
+    if [[ "$code_files" -eq 0 ]]; then
+        log INFO "Advisory self-review skipped: docs/config-only changes"
+        return 0
+    fi
+
+    # Exemption: skip tiny diffs (< 500 bytes)
+    local diff_bytes
+    diff_bytes=$(git -C "$repo_root" diff "origin/${merge_target}...HEAD" \
+        -- "${_REVIEW_PATHSPEC_EXCLUDES[@]}" | wc -c | xargs)
+    if [[ "$diff_bytes" -lt 500 ]]; then
+        log INFO "Advisory self-review skipped: tiny diff (${diff_bytes} bytes)"
+        return 0
+    fi
+
+    log INFO "Running advisory self-review (non-blocking audit)"
+
+    local prompt
+    prompt=$(prompt_self_review "$epic_num" "$title" "$repo_root" "$merge_target")
+    local tmpfile
+    tmpfile=$(mktemp "${TMPDIR:-/tmp}/autopilot-advisory-XXXXXX")
+    local findings=""
+
+    if invoke_claude "self-review" "$prompt" "$epic_num" "$title" > "$tmpfile" 2>&1; then
+        findings=$(cat "$tmpfile")
+    else
+        log WARN "Advisory self-review failed — continuing (non-blocking)"
+        findings="Advisory self-review invocation failed."
+    fi
+    rm -f "$tmpfile"
+
+    # Write findings to audit file
+    local spec_dir="$repo_root/specs/$short_name"
+    local findings_file="$spec_dir/self-review-findings.md"
+    mkdir -p "$spec_dir"
+    {
+        printf '# Self-Review Findings (Advisory)\n\n'
+        printf '**Epic:** %s — %s\n' "$epic_num" "$title"
+        printf '**Date:** %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '**Diff size:** %d bytes (~%d tokens)\n\n' "$diff_bytes" "$((diff_bytes / 4))"
+        printf '## Findings\n\n'
+        printf '%s\n' "${findings:-No findings.}"
+    } > "$findings_file"
+
+    # Commit audit trail
+    (cd "$repo_root" && git add "$findings_file" && \
+     git commit -m "audit(${epic_num}): advisory self-review findings" 2>/dev/null || true)
+
+    # Emit event
+    _emit_event "$events_log" "advisory_self_review_complete" \
+        "{\"diff_bytes\":$diff_bytes,\"file\":\"$findings_file\"}"
+
+    log INFO "Advisory self-review complete — findings written to $findings_file"
+    return 0
 }
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
