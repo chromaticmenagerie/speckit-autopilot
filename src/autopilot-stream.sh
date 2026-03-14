@@ -93,6 +93,16 @@ _emit_event() {
         '. + {ts: $ts, event: $ev}' >> "$events_log"
 }
 
+# ─── Phase Log Writer (append with round separators) ────────────────────────
+
+_write_phase_log() {
+    local phase_log="$1" content="$2" phase="$3"
+    if [[ -f "$phase_log" ]] && [[ -s "$phase_log" ]]; then
+        printf '\n---\n## %s — %s\n---\n' "$phase" "$(date -Iseconds)" >> "$phase_log"
+    fi
+    echo "$content" >> "$phase_log"
+}
+
 # ─── Event Handlers ─────────────────────────────────────────────────────────
 
 _process_system_event() {
@@ -229,7 +239,7 @@ _process_result() {
                 --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
                 '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
             _update_status "$status_file" "$epic" "$phase"
-            echo "$result_text" > "$phase_log"
+            _write_phase_log "$phase_log" "$result_text" "$phase"
             exit 3
             ;;
         error_during_execution)
@@ -240,7 +250,7 @@ _process_result() {
                 --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
                 '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
             _update_status "$status_file" "$epic" "$phase"
-            echo "$result_text" > "$phase_log"
+            _write_phase_log "$phase_log" "$result_text" "$phase"
             exit 1
             ;;
         error_max_budget_usd)
@@ -251,7 +261,7 @@ _process_result() {
                 --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
                 '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
             _update_status "$status_file" "$epic" "$phase"
-            echo "$result_text" > "$phase_log"
+            _write_phase_log "$phase_log" "$result_text" "$phase"
             exit 4
             ;;
         unknown|*)
@@ -263,7 +273,7 @@ _process_result() {
                     --argjson cost "${cost:-0}" --argjson ti "$_accumulated_input" --argjson to "$_accumulated_output" \
                     '{epic:$e, phase:$p, duration_ms:$d, cost_usd:$cost, stop_reason:$sr, subtype:$st, tokens:{input:$ti, output:$to}}')"
                 _update_status "$status_file" "$epic" "$phase"
-                echo "$result_text" > "$phase_log"
+                _write_phase_log "$phase_log" "$result_text" "$phase"
                 exit 5
             fi
             # Unknown subtype but is_error=false — treat as success
@@ -277,7 +287,7 @@ _process_result() {
         '{epic:$e, phase:$p, duration_ms:$dur, cost_usd:$cost, stop_reason:$sr, subtype:$st,
           tokens:{input:$ti, output:$to}}')"
 
-    echo "$result_text" > "$phase_log"
+    _write_phase_log "$phase_log" "$result_text" "$phase"
     # Detect empty result and warn (Fix 2)
     if [[ -z "${result_text// /}" ]]; then
         log WARN "Phase $phase produced no text output (result is empty)"
