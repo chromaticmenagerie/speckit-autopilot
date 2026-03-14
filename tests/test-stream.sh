@@ -174,6 +174,26 @@ echo "$FIXTURE_4" | (process_stream "001" "test-phase") 2>/dev/null || exit_code
 
 assert_eq "42" "$exit_code" "exit code is 42 (rate limit)"
 
+# ─── Case 5: Duplicate result events — only one phase_end emitted ────────
+
+echo ""
+echo "Case 5: Two result events in one stream — only one phase_end"
+
+FIXTURE_5='{"type":"system","model":"test-model","session_id":"test-5"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0}}}
+{"type":"result","duration_ms":5000,"total_cost_usd":0.01,"result":"Done.","subtype":"success","is_error":false}
+{"type":"result","duration_ms":5000,"total_cost_usd":0.01,"result":"Done again.","subtype":"success","is_error":false}'
+
+rm -f "$REPO_ROOT/.specify/logs/events.jsonl" "$REPO_ROOT/.specify/logs/001-test-phase.log"
+
+exit_code=0
+echo "$FIXTURE_5" | (process_stream "001" "test-phase") 2>/dev/null || exit_code=$?
+
+assert_eq "0" "$exit_code" "exit code is 0"
+
+phase_end_count=$(grep -c '"event":"phase_end"' "$REPO_ROOT/.specify/logs/events.jsonl" 2>/dev/null || echo 0)
+assert_eq "1" "$phase_end_count" "exactly one phase_end event emitted"
+
 # ─── Results ────────────────────────────────────────────────────────────────
 
 echo ""

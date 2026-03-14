@@ -307,6 +307,8 @@ _process_result() {
             "$phase" "$dur_min" "$cost" \
             "$((_accumulated_input / 1000))" "$((_accumulated_output / 1000))"
     fi
+
+    exit 0
 }
 
 # ─── Implement Progress (cached) ────────────────────────────────────────
