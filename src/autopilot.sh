@@ -944,6 +944,11 @@ run_epic() {
                     fi
                 fi
 
+                # ── Advisory self-review (always runs, non-blocking) ──
+                local _adv_events_log="$repo_root/.specify/logs/events.jsonl"
+                _advisory_self_review "$repo_root" "$MERGE_TARGET" "$epic_num" "$title" "$short_name" "$_adv_events_log" || \
+                    log WARN "Advisory self-review error — continuing (non-blocking)"
+
                 # Persist LAST_CR_STATUS for resume
                 echo "$LAST_CR_STATUS" > "$_cr_status_file"
             fi
