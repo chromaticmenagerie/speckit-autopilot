@@ -14,7 +14,7 @@ BLUE='\033[0;34m'; CYAN='\033[0;36m'
 BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 # ─── Constants & Globals ─────────────────────────────────────────────────────
-PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements security-review verify-ci review merge crystallize)
+PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements security-review security-verify verify-ci review merge crystallize)
 SPINNER_CHARS=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 POLL_INTERVAL=1; MIN_COLS=40; MIN_ROWS=24
 REPO_ROOT=""; STATUS_FILE=""; EVENTS_FILE=""
