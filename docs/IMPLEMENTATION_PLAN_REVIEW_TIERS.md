@@ -39,7 +39,7 @@ Replace the single-point-of-failure CodeRabbit CLI review with a 3-tier fallback
 | 14 | `AGENTS.md` at repo root (not `.codex/instructions.md`) | Codex CLI reads `AGENTS.md` per official discovery algorithm; `.codex/instructions.md` is not a recognized path. No conflict with `CLAUDE.md` — each tool reads its own file. Ownership conflict with speckit-core's `update-agent-context.sh` resolved via marker-based sections (`<!-- BEGIN SPECKIT-AUTOPILOT MANAGED BLOCK -->`). Each tool owns its own block; content outside blocks is preserved. |
 | 15 | `prompt_review_fix()` preserves all `_preamble()` params | Constitutional context + architecture reading are non-negotiable per preamble contract. All fix-phase prompts call `_preamble(epic_num, title, repo_root)` and use `epic_num` in commit messages — `prompt_review_fix()` must follow the same pattern |
 | 16 | Direct JSON via `-o` flag (no JSONL parsing) | `-o "$tmpfile"` writes schema-conformant JSON directly. `TIER_OUTPUT=$(cat "$tmpfile")` — no jq JSONL extraction. jq still needed in helper functions for JSON field parsing but jq-for-JSONL is eliminated. |
-| 17 | Per-tier `max_rounds` as parameter to `_review_fix_loop()` | Each tier sets its own convergence limit: CLI=3, Codex=3, Claude self-review=2. Passed as parameter, not global config. Inner retry (transient errors) stays in tier functions; outer convergence (fix loop) in `_review_fix_loop()` |
+| 17 | Per-tier `max_rounds` as parameter to `_review_fix_loop()` | Each tier sets its own convergence limit: CLI=2, Codex=2, Claude self-review=2. Passed as parameter, not global config. Inner retry (transient errors) stays in tier functions; outer convergence (fix loop) in `_review_fix_loop()` |
 | 18 | `ensure_coderabbit_config` after `HAS_CODERABBIT` check | Don't create .coderabbit.yaml when CLI not installed; avoids wasteful file I/O and git noise. Function is idempotent (~5ms on subsequent calls). |
 | 19 | `"rebase-fix"` phase for post-rebase test fixes | Line 400 reuses `"coderabbit-fix"` for test failures (with `prompt_finalize_fix()`), not review fixes. Different semantics → different phase name. Dashboard shows accurate phase. |
 | 20 | `[[ -v ]]` guard in `invoke_claude()` | Missing associative array key + `set -u` = crash with confusing "unbound variable" error. Guard catches misconfiguration gracefully. `[[ -v array[key] ]]` requires bash 4.3+ (aligned with version guard bump). Fixes latent bug in 8 direct-call sites that bypass `run_phase()` validation. |
@@ -182,10 +182,10 @@ _tiered_review() {
                 # Per-tier max rounds (Decision #17)
                 local max_rounds
                 case "$tier" in
-                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-3}" ;;
-                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-3}" ;;
+                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-2}" ;;
+                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-2}" ;;
                     self)   max_rounds="${CLAUDE_SELF_REVIEW_MAX_ROUNDS:-2}" ;;
-                    *)      max_rounds=3 ;;
+                    *)      max_rounds=2 ;;
                 esac
                 _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log"
                 tier_succeeded=true
@@ -242,7 +242,7 @@ Extracted from current `_coderabbit_cli_review()` outer loop (lines 155-296). Ma
 # Parameters:
 #   repo_root, merge_target, epic_num, title, short_name — pipeline context
 #   tier       — which tier to re-run for re-review (cli|codex|self)
-#   max_rounds — per-tier convergence limit (CLI=3, Codex=3, Claude=2)
+#   max_rounds — per-tier convergence limit (CLI=2, Codex=2, Claude=2)
 #
 # Returns: 0 (clean or force-advanced), 1 (halted — issues remain)
 #
@@ -359,7 +359,7 @@ _review_fix_loop() {
 
 | Config | Tier 1 (CLI) | Tier 2 (Codex) | Tier 3 (Claude) | Scope |
 |--------|-------------|----------------|-----------------|-------|
-| `max_rounds` | `CODERABBIT_MAX_ROUNDS` (3) | `CODEX_MAX_ROUNDS` (3) | `CLAUDE_SELF_REVIEW_MAX_ROUNDS` (2) | Passed as param |
+| `max_rounds` | `CODERABBIT_MAX_ROUNDS` (2) | `CODEX_MAX_ROUNDS` (2) | `CLAUDE_SELF_REVIEW_MAX_ROUNDS` (2) | Passed as param |
 | Stall threshold | `CONVERGENCE_STALL_ROUNDS` (2) | Same global | Same global | Global config |
 | Force-advance (stall) | `FORCE_ADVANCE_ON_REVIEW_STALL` | Same global | Same global | Global config |
 | Force-advance (error) | `FORCE_ADVANCE_ON_REVIEW_ERROR` | Same global | Same global | Global config |
@@ -1121,13 +1121,13 @@ Add to the env template writing (after line 275):
 ```bash
 # Review tiers
 HAS_CODEX="$HAS_CODEX"
-CODERABBIT_MAX_ROUNDS=3
+CODERABBIT_MAX_ROUNDS=2
 # REVIEW_TIER_ORDER=""    # Auto-detected. Override: cli,codex,self
 # CODEX_REVIEW_TIMEOUT=300
 # CODEX_MAX_DIFF_BYTES=800000
 
 # Per-tier convergence limits (defaults shown)
-# CODEX_MAX_ROUNDS=3
+# CODEX_MAX_ROUNDS=2
 # CLAUDE_SELF_REVIEW_MAX_ROUNDS=2
 
 # Deprecated: use SKIP_REVIEW and REVIEW_TIER_ORDER above
