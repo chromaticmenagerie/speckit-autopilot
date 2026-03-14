@@ -107,16 +107,6 @@ else
     fail "STRICT_MODE default not found"
 fi
 
-# ── 5. Verify --allow-* flags are deprecated (log WARN, no assignment) ──
-
-for flag in "allow-deferred" "allow-security-skip" "allow-requirements-skip"; do
-    if grep -A1 -- "--${flag})" "$SRC_DIR/autopilot.sh" | grep -q 'log WARN.*deprecated'; then
-        pass "--${flag} logs deprecation warning"
-    else
-        fail "--${flag} does not log deprecation warning"
-    fi
-done
-
 # ── 6. Verify project.env template no longer has individual FORCE_ADVANCE vars ──
 
 TEMPLATE_SRC="$SRC_DIR/autopilot-detect-tools.sh"
@@ -140,12 +130,24 @@ else
     fail "Help text missing --strict"
 fi
 
-# ── 8. Verify help text marks --allow-* as deprecated ──
+# ── 8. Verify deprecated --allow-* flags are fully removed ──
 
-if grep -q 'Deprecated' "$SRC_DIR/autopilot.sh" && grep -q -- '--allow-deferred' "$SRC_DIR/autopilot.sh"; then
-    pass "Help text marks --allow-* as deprecated"
+if grep -q -- '--allow-deferred' "$SRC_DIR/autopilot.sh"; then
+    fail "Stale --allow-deferred reference still in autopilot.sh"
 else
-    fail "Help text does not mark --allow-* as deprecated"
+    pass "No stale --allow-deferred references"
+fi
+
+if grep -q -- '--allow-security-skip' "$SRC_DIR/autopilot.sh"; then
+    fail "Stale --allow-security-skip reference still in autopilot.sh"
+else
+    pass "No stale --allow-security-skip references"
+fi
+
+if grep -q -- '--allow-requirements-skip' "$SRC_DIR/autopilot.sh"; then
+    fail "Stale --allow-requirements-skip reference still in autopilot.sh"
+else
+    pass "No stale --allow-requirements-skip references"
 fi
 
 # ── Summary ──

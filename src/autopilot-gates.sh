@@ -76,14 +76,14 @@ _run_security_gate() {
     if [[ -f "$tasks_file" ]] && grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null && \
        ! grep -q '<!-- SECURITY_REVIEWED -->' "$tasks_file" 2>/dev/null; then
         if [[ "${SECURITY_FORCE_SKIP_ALLOWED:-false}" == "true" ]]; then
-            log INFO "Security gate previously halted — --allow-security-skip passed, force-advancing"
+            log INFO "Security gate previously halted — auto-advance enabled, force-advancing"
             echo "" >> "$tasks_file"
             echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
             (cd "$repo_root" && git add "$tasks_file" && \
-             git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip" 2>/dev/null || true)
+             git commit -m "security-review(${epic_num}): force-advanced (auto-advance)" 2>/dev/null || true)
             return 0
         fi
-        log ERROR "Security gate previously halted — re-run with --allow-security-skip to force-advance"
+        log ERROR "Security gate previously halted (--strict mode). Remove --strict to allow auto-advance."
         return 1
     fi
 
@@ -194,17 +194,17 @@ SEOF
 
                 _should_halt_on_severity "$SECURITY_MIN_SEVERITY_TO_HALT" "$crit" "$high" "$med" "$low" || return 1
 
-                log WARN "Security gate: issues remain after $max_rounds cycles — force-advancing (--allow-security-skip)"
+                log WARN "Security gate: issues remain after $max_rounds cycles — force-advancing (auto-advance enabled)"
                 echo "" >> "$tasks_file"
                 echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
                 if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
                     echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
                 fi
                 (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
-                 git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip after ${max_rounds} cycles" 2>/dev/null || true)
+                 git commit -m "security-review(${epic_num}): force-advanced (auto-advance) after ${max_rounds} cycles" 2>/dev/null || true)
             else
                 log ERROR "Security gate: unresolved findings after $max_rounds cycles — halting pipeline"
-                log ERROR "Re-run with --allow-security-skip to force-advance past security failures"
+                log ERROR "Halted by --strict mode. Remove --strict to allow auto-advance past security failures."
                 echo "" >> "$tasks_file"
                 if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
                     echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"

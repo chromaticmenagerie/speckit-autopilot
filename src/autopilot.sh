@@ -167,7 +167,7 @@ declare -A PHASE_TOOLS=(
     [conflict-resolve]="Read,Write,Edit,Bash,Glob,Grep"
     [verify-requirements]="Read,Write,Glob,Grep"
     [requirements-fix]="Read,Write,Edit,Bash,Glob,Grep"
-    [requirements-recheck]="Read,Glob,Grep,Bash"
+    [requirements-recheck]="Read,Write,Glob,Grep,Bash"
     [security-review]="Read,Write,Glob,Grep"
     [security-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [security-verify]="Read,Glob,Grep,Bash"
@@ -248,15 +248,6 @@ parse_args() {
                 ;;
             --strict-deps)      STRICT_DEPS=true ;;
             --strict)           STRICT_MODE=true ;;
-            --allow-deferred)
-                log WARN "--allow-deferred is deprecated (deferral now allowed by default). Use --strict to prevent. Will be removed in v0.11.0."
-                ;;
-            --allow-security-skip)
-                log WARN "--allow-security-skip is deprecated (gates now advance by default). Use --strict to halt. Will be removed in v0.11.0."
-                ;;
-            --allow-requirements-skip)
-                log WARN "--allow-requirements-skip is deprecated (gates now advance by default). Use --strict to halt. Will be removed in v0.11.0."
-                ;;
             --allow-cascade) FORCE_SKIP_CASCADE_LIMIT=99 ;;
             --allow-main-merge) ALLOW_MAIN_MERGE=true ;;
             --skip-review|--skip-coderabbit)  SKIP_REVIEW=true ;;
@@ -292,11 +283,6 @@ parse_args() {
                 echo "  --allow-main-merge   Allow merge to main/master even when staging branch exists"
                 echo "  --max-iterations N   Override iteration safety limit (default: 60)"
                 echo "  --auto-revert        Auto-revert merge on finalize failure (opt-in)"
-                echo ""
-                echo "Deprecated (no-ops, gates now advance by default; use --strict to halt):"
-                echo "  --allow-deferred"
-                echo "  --allow-security-skip"
-                echo "  --allow-requirements-skip"
                 exit 0
                 ;;
             [0-9][0-9][0-9]-[0-9][0-9][0-9])
@@ -880,7 +866,7 @@ run_epic() {
 
         if [[ "$state" == "verify-requirements" ]]; then
             if ! _run_requirements_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
-                log ERROR "Requirements verification halted. Use --allow-requirements-skip to force-advance."
+                log ERROR "Requirements verification halted (--strict mode). Remove --strict to allow auto-advance."
                 return 1
             fi
             continue  # re-detect state → should now be "security-review"
@@ -888,7 +874,7 @@ run_epic() {
 
         if [[ "$state" == "security-review" ]]; then
             if ! _run_security_gate "$repo_root" "$epic_num" "$short_name" "$title" "$epic_file"; then
-                log ERROR "Security gate halted pipeline — re-run with --allow-security-skip to force-advance"
+                log ERROR "Security gate halted pipeline (--strict mode). Remove --strict to allow auto-advance."
                 return 1
             fi
             continue  # re-detect state → should now be "review"
@@ -1199,8 +1185,8 @@ run_epic() {
                 continue
             elif [[ "$state" == "implement" ]] && [[ -f "$spec_dir/tasks.md" ]]; then
                 if ! ${ALLOW_DEFERRED:-false}; then
-                    log ERROR "Implement stuck after $retries attempts. Re-run with --allow-deferred to defer stuck tasks."
-                    log ERROR "Resume with: ./autopilot.sh $epic_num --allow-deferred"
+                    log ERROR "Implement stuck after $retries attempts (deferral disabled by --strict)."
+                    log ERROR "Resume without --strict to allow automatic deferral."
                     return 1
                 fi
 

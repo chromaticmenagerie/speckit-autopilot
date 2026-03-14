@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-allow-deferred-default.sh — Verify ALLOW_DEFERRED defaults to true and --allow-deferred is deprecated no-op
+# test-allow-deferred-default.sh — Verify ALLOW_DEFERRED defaults to true and env override works
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH="" cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,15 +37,6 @@ assert_eq "default line uses :- expansion" 'ALLOW_DEFERRED="${ALLOW_DEFERRED:-tr
     [[ "$ALLOW_DEFERRED" == "false" ]]
 ) && assert_eq "ALLOW_DEFERRED=false env override preserved" "true" "true" \
   || assert_eq "ALLOW_DEFERRED=false env override preserved" "true" "false"
-
-# ─── Test 4: --allow-deferred is deprecated no-op that logs WARN ─────────────
-grep -q '\-\-allow-deferred)' "$SRC_DIR/autopilot.sh" \
-  && assert_eq "--allow-deferred case still in parse_args" "true" "true" \
-  || assert_eq "--allow-deferred case still in parse_args" "true" "false"
-
-grep -q 'allow-deferred.*deprecated' "$SRC_DIR/autopilot.sh" \
-  && assert_eq "--allow-deferred logs deprecation warning" "true" "true" \
-  || assert_eq "--allow-deferred logs deprecation warning" "true" "false"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 echo ""

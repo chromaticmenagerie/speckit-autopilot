@@ -24,7 +24,7 @@ _run_requirements_gate() {
     # Resume guard: check for prior halt
     if grep -q '<!-- REQUIREMENTS_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
         if [[ "$REQUIREMENTS_FORCE_SKIP_ALLOWED" != "true" ]]; then
-            log ERROR "Requirements verification previously halted. Re-run with --allow-requirements-skip to force-advance."
+            log ERROR "Requirements verification previously halted (--strict mode). Remove --strict to allow auto-advance."
             return 1
         fi
         # Force-advance: add verified marker
@@ -230,7 +230,7 @@ RECHECK_HEADER
             echo '<!-- REQUIREMENTS_VERIFIED -->' >> "$tasks_file"
             git -C "$repo_root" add "$tasks_file" && \
             git -C "$repo_root" commit -m "chore($epic_num): requirements force-advanced (${pct}%)" --no-verify 2>/dev/null || true
-            log WARN "Requirements verification force-advanced (--allow-requirements-skip)"
+            log WARN "Requirements verification force-advanced (auto-advance enabled)"
             return 0
         else
             log ERROR "FR coverage below 80% — halting"
