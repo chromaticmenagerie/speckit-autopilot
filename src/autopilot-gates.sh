@@ -60,7 +60,7 @@ _should_halt_on_severity() {
 
 _run_security_gate() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
-    local max_rounds=${SECURITY_MAX_ROUNDS:-2}
+    local max_rounds=${SECURITY_MAX_ROUNDS:-3}
     local round=0
     local spec_dir="$repo_root/specs/$short_name"
     local findings_file="$spec_dir/security-findings.md"

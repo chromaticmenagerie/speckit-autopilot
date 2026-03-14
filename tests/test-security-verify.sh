@@ -194,11 +194,11 @@ fi
 echo ""
 echo "Max rounds default"
 
-# In autopilot-gates.sh, the fallback default is 2: ${SECURITY_MAX_ROUNDS:-2}
-if grep -q 'SECURITY_MAX_ROUNDS:-2' "$GATES_FILE"; then
-    pass "SECURITY_MAX_ROUNDS gates fallback is 2"
+# In autopilot-gates.sh, the fallback default is 3: ${SECURITY_MAX_ROUNDS:-3}
+if grep -q 'SECURITY_MAX_ROUNDS:-3' "$GATES_FILE"; then
+    pass "SECURITY_MAX_ROUNDS gates fallback is 3"
 else
-    fail "SECURITY_MAX_ROUNDS gates fallback is 2"
+    fail "SECURITY_MAX_ROUNDS gates fallback is 3"
 fi
 
 # ─── 9. Gate function structural check ────────────────────────────────────
