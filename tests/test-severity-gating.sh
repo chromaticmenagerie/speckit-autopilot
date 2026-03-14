@@ -22,19 +22,11 @@ echo -e "${BOLD}Severity Gating Tests${RESET}"
 
 GATES_FILE="$REPO_ROOT/src/autopilot-gates.sh"
 
+log() { :; }
+source "$REPO_ROOT/src/autopilot-gates.sh"
+
 # ─── Structural checks ──────────────────────────────────────────────────
 grep -q '_classify_security_severity()' "$GATES_FILE" && pass "_classify_security_severity defined" || fail "_classify_security_severity defined"
-
-# Define function inline for testing
-_classify_security_severity() {
-    local findings_file="$1"
-    local critical_count high_count medium_count low_count
-    critical_count=$(grep -c '\*\*Severity\*\*: CRITICAL' "$findings_file" 2>/dev/null) || critical_count=0
-    high_count=$(grep -c '\*\*Severity\*\*: HIGH' "$findings_file" 2>/dev/null) || high_count=0
-    medium_count=$(grep -c '\*\*Severity\*\*: MEDIUM' "$findings_file" 2>/dev/null) || medium_count=0
-    low_count=$(grep -c '\*\*Severity\*\*: LOW' "$findings_file" 2>/dev/null) || low_count=0
-    echo "$critical_count $high_count $medium_count $low_count"
-}
 
 # ─── Test mixed severities ──────────────────────────────────────────────
 TMPF=$(mktemp)
@@ -76,17 +68,6 @@ l=$(echo "$result3" | awk '{print $4}'); l=${l:-0}
 [[ "$l" == "2" ]] && pass "LOW-only: low count == 2" || fail "LOW-only: low count == 2 (got: '$l')"
 
 # ─── _classify_security_severity_from_string tests ─────────────────────
-
-# Define string-based classifier inline for testing
-_classify_security_severity_from_string() {
-    local content="$1"
-    local critical_count high_count medium_count low_count
-    critical_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: CRITICAL' 2>/dev/null) || critical_count=0
-    high_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: HIGH' 2>/dev/null) || high_count=0
-    medium_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: MEDIUM' 2>/dev/null) || medium_count=0
-    low_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: LOW' 2>/dev/null) || low_count=0
-    echo "$critical_count $high_count $medium_count $low_count"
-}
 
 # Structural: function exists in source
 grep -q '_classify_security_severity_from_string()' "$GATES_FILE" && pass "_classify_security_severity_from_string defined" || fail "_classify_security_severity_from_string defined"
@@ -133,7 +114,7 @@ high_lo=$(echo "$result_high" | awk '{print $4}'); high_lo=${high_lo:-0}
 [[ "$high_lo" == "0" ]] && pass "String HIGH-only: 0 low" || fail "String HIGH-only: 0 low"
 
 # ─── Structural: MEDIUM elif case exists ───────────────────────────────
-grep -q 'SECURITY_MIN_SEVERITY_TO_HALT.*MEDIUM.*crit.*high.*med' "$GATES_FILE" && pass "MEDIUM elif case exists" || fail "MEDIUM elif case exists"
+grep -q 'min_severity.*MEDIUM.*crit.*high.*med' "$GATES_FILE" && pass "MEDIUM elif case exists" || fail "MEDIUM elif case exists"
 
 # ─── Structural: LOW escape hatch exists ───────────────────────────────
 grep -q 'LOW escape hatch' "$GATES_FILE" && pass "LOW escape hatch comment exists" || fail "LOW escape hatch comment exists"
@@ -158,6 +139,104 @@ grep -q 'accepted LOW findings' "$GATES_FILE" && pass "Conditional commit msg fo
 # ─── Structural: severity halt path exists ──────────────────────────────
 grep -q 'halting regardless of SECURITY_FORCE_SKIP_ALLOWED' "$GATES_FILE" && pass "Severity check before force-skip exists" || fail "Severity check before force-skip exists"
 grep -q 'SECURITY_MIN_SEVERITY_TO_HALT=.*HIGH' "$GATES_FILE" && pass "SECURITY_MIN_SEVERITY_TO_HALT default is HIGH" || fail "SECURITY_MIN_SEVERITY_TO_HALT default is HIGH"
+
+# ─── Functional: _should_halt_on_severity ────────────────────────────
+
+# HIGH threshold: CRITICAL findings → halt
+rc=0; _should_halt_on_severity "HIGH" 1 0 0 0 || rc=$?
+[[ $rc -eq 1 ]] && pass "halt: HIGH threshold, CRITICAL present → halt" || fail "halt: HIGH threshold, CRITICAL present → halt"
+
+# HIGH threshold: HIGH findings → halt
+rc=0; _should_halt_on_severity "HIGH" 0 2 0 0 || rc=$?
+[[ $rc -eq 1 ]] && pass "halt: HIGH threshold, HIGH present → halt" || fail "halt: HIGH threshold, HIGH present → halt"
+
+# HIGH threshold: only MEDIUM+LOW → allow
+rc=0; _should_halt_on_severity "HIGH" 0 0 3 1 || rc=$?
+[[ $rc -eq 0 ]] && pass "halt: HIGH threshold, only MED+LOW → allow" || fail "halt: HIGH threshold, only MED+LOW → allow"
+
+# CRITICAL threshold: CRITICAL present → halt
+rc=0; _should_halt_on_severity "CRITICAL" 1 0 0 0 || rc=$?
+[[ $rc -eq 1 ]] && pass "halt: CRITICAL threshold, CRITICAL present → halt" || fail "halt: CRITICAL threshold, CRITICAL present → halt"
+
+# CRITICAL threshold: only HIGH → allow
+rc=0; _should_halt_on_severity "CRITICAL" 0 2 0 0 || rc=$?
+[[ $rc -eq 0 ]] && pass "halt: CRITICAL threshold, only HIGH → allow" || fail "halt: CRITICAL threshold, only HIGH → allow"
+
+# MEDIUM threshold: MEDIUM present → halt
+rc=0; _should_halt_on_severity "MEDIUM" 0 0 1 0 || rc=$?
+[[ $rc -eq 1 ]] && pass "halt: MEDIUM threshold, MEDIUM present → halt" || fail "halt: MEDIUM threshold, MEDIUM present → halt"
+
+# MEDIUM threshold: only LOW → allow
+rc=0; _should_halt_on_severity "MEDIUM" 0 0 0 2 || rc=$?
+[[ $rc -eq 0 ]] && pass "halt: MEDIUM threshold, only LOW → allow" || fail "halt: MEDIUM threshold, only LOW → allow"
+
+# LOW threshold: LOW present → halt
+rc=0; _should_halt_on_severity "LOW" 0 0 0 1 || rc=$?
+[[ $rc -eq 1 ]] && pass "halt: LOW threshold, LOW present → halt" || fail "halt: LOW threshold, LOW present → halt"
+
+# ─── Functional: LOW escape hatch decision logic ────────────────────
+
+# LOW-only findings + MIN!=LOW → would escape
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
+esc_result=$(_classify_security_severity_from_string "- **Severity**: LOW — Missing CSP
+- **Severity**: LOW — No HSTS")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+(( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]] && \
+    pass "escape: LOW-only + MIN=HIGH → would escape" || fail "escape: LOW-only + MIN=HIGH → would escape"
+
+# MEDIUM+LOW findings + MIN!=LOW → would NOT escape
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
+esc_result=$(_classify_security_severity_from_string "- **Severity**: MEDIUM — Verbose errors
+- **Severity**: LOW — Missing headers")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+if (( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+    fail "escape: MED+LOW + MIN=HIGH → should NOT escape"
+else
+    pass "escape: MED+LOW + MIN=HIGH → should NOT escape"
+fi
+
+# HIGH findings → would NOT escape
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
+esc_result=$(_classify_security_severity_from_string "- **Severity**: HIGH — Auth bypass")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+if (( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+    fail "escape: HIGH findings → should NOT escape"
+else
+    pass "escape: HIGH findings → should NOT escape"
+fi
+
+# LOW-only findings + MIN=LOW → would NOT escape (hatch disabled)
+SECURITY_MIN_SEVERITY_TO_HALT="LOW"
+esc_result=$(_classify_security_severity_from_string "- **Severity**: LOW — Missing CSP")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+if (( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+    fail "escape: LOW-only + MIN=LOW → hatch disabled, should NOT escape"
+else
+    pass "escape: LOW-only + MIN=LOW → hatch disabled, should NOT escape"
+fi
+
+# Empty findings → would NOT escape
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
+esc_result=$(_classify_security_severity_from_string "")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+if (( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+    fail "escape: empty findings → should NOT escape"
+else
+    pass "escape: empty findings → should NOT escape"
+fi
+
+# CRITICAL-only → would NOT escape
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
+esc_result=$(_classify_security_severity_from_string "- **Severity**: CRITICAL — SQL injection")
+read -r esc_c esc_h esc_m esc_l <<< "$esc_result"
+if (( esc_c + esc_h + esc_m == 0 )) && (( esc_l > 0 )) && [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+    fail "escape: CRITICAL-only → should NOT escape"
+else
+    pass "escape: CRITICAL-only → should NOT escape"
+fi
+
+# Restore default
+SECURITY_MIN_SEVERITY_TO_HALT="HIGH"
 
 echo ""
 echo -e "${BOLD}========================================${RESET}"

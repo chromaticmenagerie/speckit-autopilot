@@ -38,6 +38,24 @@ _classify_security_severity_from_string() {
     echo "$critical_count $high_count $medium_count $low_count"
 }
 
+_should_halt_on_severity() {
+    local min_severity="$1" crit="$2" high="$3" med="$4" low="$5"
+    if [[ "$min_severity" == "HIGH" ]] && (( crit + high > 0 )); then
+        log ERROR "HIGH/CRITICAL security findings ($crit critical, $high high) — halting regardless of SECURITY_FORCE_SKIP_ALLOWED"
+        return 1
+    elif [[ "$min_severity" == "CRITICAL" ]] && (( crit > 0 )); then
+        log ERROR "CRITICAL security findings ($crit) — halting"
+        return 1
+    elif [[ "$min_severity" == "MEDIUM" ]] && (( crit + high + med > 0 )); then
+        log ERROR "MEDIUM+ security findings ($crit critical, $high high, $med medium) — halting"
+        return 1
+    elif [[ "$min_severity" == "LOW" ]] && (( crit + high + med + low > 0 )); then
+        log ERROR "Security findings present ($crit critical, $high high, $med medium, $low low) — halting (MIN_SEVERITY=LOW)"
+        return 1
+    fi
+    return 0
+}
+
 # ─── Security Gate (review→fix loop) ─────────────────────────────────────
 
 _run_security_gate() {
@@ -114,7 +132,8 @@ SEOF
         local latest_findings
         latest_findings=$(awk '/^## Round '"$round"'/{found=1} found' "$findings_file")
 
-        # LOW escape hatch: skip fix cycle when only LOW findings remain
+        # LOW escape hatch: when min_severity threshold is above LOW,
+        # skip fix cycle if only LOW-severity findings remain (below policy threshold)
         if [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
             local esc_sev
             esc_sev=$(_classify_security_severity_from_string "$latest_findings")
@@ -172,19 +191,7 @@ SEOF
                 local crit high med low
                 read -r crit high med low <<< "$severities"
 
-                if [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "HIGH" ]] && (( crit + high > 0 )); then
-                    log ERROR "HIGH/CRITICAL security findings ($crit critical, $high high) — halting regardless of SECURITY_FORCE_SKIP_ALLOWED"
-                    return 1
-                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "CRITICAL" ]] && (( crit > 0 )); then
-                    log ERROR "CRITICAL security findings ($crit) — halting"
-                    return 1
-                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "MEDIUM" ]] && (( crit + high + med > 0 )); then
-                    log ERROR "MEDIUM+ security findings ($crit critical, $high high, $med medium) — halting"
-                    return 1
-                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "LOW" ]] && (( crit + high + med + low > 0 )); then
-                    log ERROR "Security findings present ($crit critical, $high high, $med medium, $low low) — halting (MIN_SEVERITY=LOW)"
-                    return 1
-                fi
+                _should_halt_on_severity "$SECURITY_MIN_SEVERITY_TO_HALT" "$crit" "$high" "$med" "$low" || return 1
 
                 log WARN "Security gate: issues remain after $max_rounds cycles — force-advancing (--allow-security-skip)"
                 echo "" >> "$tasks_file"
