@@ -11,7 +11,7 @@ curl -sSL https://raw.githubusercontent.com/chromaticmenagerie/speckit-autopilot
 **Prerequisites**: Spec Kit must be installed first (`.specify/` directory).
 
 The installer:
-- Copies 5 orchestrator scripts to `.specify/scripts/bash/`
+- Copies 20 orchestrator files to `.specify/scripts/bash/`
 - Registers the `/autopilot` skill in `.claude/skills/autopilot/`
 - Auto-detects project tooling (Python, Node, Rust, Go) and writes `.specify/project.env`
 - Detects your base branch (main/master) for merge operations
@@ -33,8 +33,27 @@ Or directly:
 ```bash
 .specify/scripts/bash/autopilot.sh [epic-number] [--dry-run] [--silent] [--no-auto-continue]
 .specify/scripts/bash/autopilot.sh 003 --strict-deps     # Block on unmerged dependencies
-.specify/scripts/bash/autopilot.sh 003 --allow-deferred   # Defer stuck tasks instead of stopping
+.specify/scripts/bash/autopilot.sh 003 --strict           # Halt on all gate failures
 ```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--no-auto-continue` | Pause between epics instead of auto-continuing |
+| `--dry-run` | Preview without invoking Claude |
+| `--silent` | Suppress live dashboard output (files still written) |
+| `--skip PHASE` | Skip a convergence phase (clarify, clarify-verify, design-read, analyze) |
+| `--fast` | Reduce convergence phases to 1 attempt |
+| `--no-github` | Disable GitHub Projects sync |
+| `--github-resync` | Resync all epics to GitHub Projects and exit |
+| `--strict` | Halt on all gate failures (disable auto-advance) |
+| `--strict-deps` | Block on unmerged dependencies (default: warn only) |
+| `--skip-review` | Skip code review during remote merge |
+| `--allow-cascade` | Raise cascade circuit-breaker limit to 99 |
+| `--allow-main-merge` | Allow merge to main/master even when staging branch exists |
+| `--max-iterations N` | Override iteration safety limit (default: 60) |
+| `--auto-revert` | Auto-revert merge on finalize failure (opt-in) |
 
 ## How It Works
 
@@ -94,16 +113,13 @@ Tasks can be marked `- [-]` (deferred) to skip them without blocking the pipelin
 
 Mark tasks as `- [-]` directly in `tasks.md` before or during a run.
 
-### Automatic deferral (`--allow-deferred`)
+### Automatic deferral (default)
 
-When the implement phase is stuck after max retries:
-
-- **Without `--allow-deferred`** (default): Pipeline stops with an error
-- **With `--allow-deferred`**: Only the stuck phase's tasks are deferred; future phases are still attempted
+Deferral is enabled by default. When the implement phase is stuck after max retries, only the stuck phase's tasks are deferred; future phases are still attempted. Use `--strict` to disable automatic deferral and halt instead.
 
 Safety guardrails:
 - Scoped to the stuck phase only (not all phases)
-- Stops after 2 consecutive phases deferred
+- Stops after 5 consecutive phases deferred
 - Audit marker: `<!-- FORCE_DEFERRED: Phase N -->` distinguishes auto-deferral from manual
 
 ## Configuration
@@ -133,12 +149,26 @@ While running:
 
 | Script | Purpose | Lines |
 |--------|---------|-------|
-| `autopilot.sh` | Main orchestrator, phase dispatch, merge, finalize | ~530 |
-| `autopilot-lib.sh` | State detection, epic discovery, logging, verification | ~450 |
-| `autopilot-prompts.sh` | Language-agnostic prompt templates per phase | ~350 |
-| `autopilot-stream.sh` | NDJSON stream processor, live dashboard | ~290 |
-| `autopilot-detect-project.sh` | Project tooling auto-detection | ~150 |
-| `autopilot-validate.sh` | Pre-specify epic validation | ~200 |
+| `autopilot.sh` | Main orchestrator, phase dispatch, state machine | ~1430 |
+| `autopilot-prompts.sh` | Phase-specific prompt templates | ~1335 |
+| `autopilot-lib.sh` | State detection, epic discovery, logging, verification | ~1080 |
+| `autopilot-review.sh` | Tiered code review (CLI, Codex, Claude) | ~670 |
+| `autopilot-verify.sh` | Test, build, and CI verification gates | ~555 |
+| `autopilot-merge.sh` | Branch merge, PR creation, post-merge cleanup | ~480 |
+| `autopilot-watch.sh` | Live dashboard and phase monitoring | ~475 |
+| `autopilot-stream.sh` | NDJSON stream processor, status updates | ~430 |
+| `autopilot-gates.sh` | Security and CI gate orchestration | ~375 |
+| `autopilot-detect-tools.sh` | Tool detection, project.env generation | ~350 |
+| `autopilot-github-sync.sh` | GitHub Projects sync, issue tracking | ~340 |
+| `autopilot-validate.sh` | Pre-specify epic validation | ~330 |
+| `autopilot-github.sh` | GitHub API helpers, auth, rate limiting | ~290 |
+| `autopilot-detect-project.sh` | Project tooling auto-detection | ~290 |
+| `autopilot-review-helpers.sh` | Review diff chunking and helpers | ~265 |
+| `autopilot-requirements.sh` | FR coverage gate and requirements recheck | ~240 |
+| `autopilot-finalize.sh` | Post-merge finalization, revert logic | ~240 |
+| `common.sh` | Shared utilities (logging, managed sections) | ~185 |
+| `autopilot-design.sh` | Design file (.pen) reading phase | ~95 |
+| `codex-review-schema.json` | Codex review output schema | ~55 |
 
 ## Upgrade
 
