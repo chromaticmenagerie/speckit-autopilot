@@ -41,8 +41,8 @@ assert_eq 'STUB_ENFORCEMENT_LEVEL="${STUB_ENFORCEMENT_LEVEL:-warn}"' \
     "belt-and-suspenders default fallback to warn"
 
 # Test 3: project.env template contains STUB_ENFORCEMENT_LEVEL
-echo "Test 3: detect-project.sh template includes STUB_ENFORCEMENT_LEVEL"
-_tmpl=$(grep '^STUB_ENFORCEMENT_LEVEL=' "$SRC_DIR/autopilot-detect-project.sh" || true)
+echo "Test 3: detect-tools.sh template includes STUB_ENFORCEMENT_LEVEL"
+_tmpl=$(grep '^STUB_ENFORCEMENT_LEVEL=' "$SRC_DIR/autopilot-detect-tools.sh" || true)
 assert_eq 'STUB_ENFORCEMENT_LEVEL="warn"' "$_tmpl" "template default is warn"
 
 # Test 4: load_project_config sets default when variable missing from env file

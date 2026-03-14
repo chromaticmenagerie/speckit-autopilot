@@ -119,13 +119,14 @@ done
 
 # ── 6. Verify project.env template no longer has individual FORCE_ADVANCE vars ──
 
-if grep -q 'FORCE_ADVANCE_ON_REVIEW_STALL=' "$SRC_DIR/autopilot-detect-project.sh"; then
+TEMPLATE_SRC="$SRC_DIR/autopilot-detect-tools.sh"
+if grep -q 'FORCE_ADVANCE_ON_REVIEW_STALL=' "$TEMPLATE_SRC"; then
     fail "project.env template still has FORCE_ADVANCE_ON_REVIEW_STALL"
 else
     pass "project.env template cleaned of individual FORCE_ADVANCE vars"
 fi
 
-if grep -q 'All gate variables default to true' "$SRC_DIR/autopilot-detect-project.sh"; then
+if grep -q 'All gate variables default to true' "$TEMPLATE_SRC"; then
     pass "project.env template has consolidated gate comment"
 else
     fail "project.env template missing consolidated gate comment"
