@@ -82,7 +82,7 @@ repo2="$TMPDIR_TEST/repo2"
 mkdir -p "$repo2/specs/002-test"
 echo "- [x] Task 1" > "$repo2/specs/002-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo2" "main" "002" "test" "002-test" "cli" 2 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo2" "main" "002" "test" "002-test" "cli" 2 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "max-rounds+force returns 3"
 rc=0; grep -qF "<!-- REVIEW_FORCE_SKIPPED -->" "$repo2/specs/002-test/tasks.md" || rc=$?
 assert_eq "0" "$rc" "marker written to tasks.md on max-rounds-exhausted"
@@ -106,7 +106,7 @@ repo3="$TMPDIR_TEST/repo3"
 mkdir -p "$repo3/specs/003-test"
 echo "- [x] Task 1" > "$repo3/specs/003-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo3" "main" "003" "test" "003-test" "cli" 5 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo3" "main" "003" "test" "003-test" "cli" 5 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "stall+force returns 3"
 rc=0; grep -qF "<!-- REVIEW_FORCE_SKIPPED -->" "$repo3/specs/003-test/tasks.md" || rc=$?
 assert_eq "0" "$rc" "marker written to tasks.md on stall force-advance"

@@ -126,7 +126,7 @@ FORCE_ADVANCE_ON_REVIEW_STALL=false
 CONVERGENCE_STALL_ROUNDS=2
 DIMINISHING_RETURNS_THRESHOLD=99
 
-rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" "" || rc=$?
 assert_eq "0" "$rc" "clean-round-2: returns 0"
 echo "$LAST_CR_STATUS" | grep -q "clean" && _found_clean=0 || _found_clean=1
 assert_eq "0" "$_found_clean" "clean-round-2: LAST_CR_STATUS contains 'clean'"
@@ -140,7 +140,7 @@ FORCE_ADVANCE_ON_REVIEW_STALL=false
 CONVERGENCE_STALL_ROUNDS=99
 DIMINISHING_RETURNS_THRESHOLD=99
 
-rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" "" || rc=$?
 assert_eq "1" "$rc" "max-rounds-exhausted: returns 1"
 echo "$LAST_CR_STATUS" | grep -q "halted" && _found_halt=0 || _found_halt=1
 assert_eq "0" "$_found_halt" "max-rounds-exhausted: LAST_CR_STATUS contains 'halted'"
@@ -154,7 +154,7 @@ FORCE_ADVANCE_ON_REVIEW_STALL=false
 CONVERGENCE_STALL_ROUNDS=99
 DIMINISHING_RETURNS_THRESHOLD=99
 
-rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "max-rounds+force: returns 3 (force-advance, fall through to next tier)"
 echo "$LAST_CR_STATUS" | grep -q "force-advanced" && _found_force=0 || _found_force=1
 assert_eq "0" "$_found_force" "max-rounds+force: LAST_CR_STATUS contains 'force-advanced'"
@@ -168,7 +168,7 @@ FORCE_ADVANCE_ON_REVIEW_STALL=false
 CONVERGENCE_STALL_ROUNDS=99
 DIMINISHING_RETURNS_THRESHOLD=99
 
-rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" "" || rc=$?
 assert_eq "2" "$rc" "tier-error-mid-loop: returns 2 (signals caller to try next tier)"
 
 # ─── Summary ────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ repo="$TMPDIR_TEST/repo1"
 mkdir -p "$repo/specs/001-test"
 echo "- [x] Task 1" > "$repo/specs/001-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo" "main" "001" "test" "001-test" "cli" 5 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo" "main" "001" "test" "001-test" "cli" 5 "/dev/null" "" || rc=$?
 assert_eq "1" "$rc" "blocked: count=8>5, ratio=62%>50% → halted (rc=1)"
 # Verify NO marker written (halted, not force-advanced)
 rc=0; grep -qF "<!-- REVIEW_FORCE_SKIPPED -->" "$repo/specs/001-test/tasks.md" && rc=1 || rc=0
@@ -92,7 +92,7 @@ repo2="$TMPDIR_TEST/repo2"
 mkdir -p "$repo2/specs/002-test"
 echo "- [x] Task 1" > "$repo2/specs/002-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo2" "main" "002" "test" "002-test" "cli" 5 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo2" "main" "002" "test" "002-test" "cli" 5 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "advances: count=2<=5 → force-advanced (rc=3)"
 rc=0; grep -qF "<!-- REVIEW_FORCE_SKIPPED -->" "$repo2/specs/002-test/tasks.md" || rc=$?
 assert_eq "0" "$rc" "advances: REVIEW_FORCE_SKIPPED marker written"
@@ -109,7 +109,7 @@ repo3="$TMPDIR_TEST/repo3"
 mkdir -p "$repo3/specs/003-test"
 echo "- [x] Task 1" > "$repo3/specs/003-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo3" "main" "003" "test" "003-test" "cli" 5 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo3" "main" "003" "test" "003-test" "cli" 5 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "advances: ratio=30%<50% → force-advanced (rc=3)"
 rc=0; grep -qF "<!-- REVIEW_FORCE_SKIPPED -->" "$repo3/specs/003-test/tasks.md" || rc=$?
 assert_eq "0" "$rc" "advances: REVIEW_FORCE_SKIPPED marker written"
@@ -126,7 +126,7 @@ repo4="$TMPDIR_TEST/repo4"
 mkdir -p "$repo4/specs/004-test"
 echo "- [x] Task 1" > "$repo4/specs/004-test/tasks.md"
 
-rc=0; _review_fix_loop "$repo4" "main" "004" "test" "004-test" "cli" 5 "/dev/null" || rc=$?
+rc=0; _review_fix_loop "$repo4" "main" "004" "test" "004-test" "cli" 5 "/dev/null" "" || rc=$?
 assert_eq "1" "$rc" "blocked: count=8>5, ratio=80%>50% → halted"
 
 # ─── Summary ────────────────────────────────────────────────────────────────

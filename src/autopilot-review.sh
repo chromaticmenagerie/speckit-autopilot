@@ -164,7 +164,7 @@ _tiered_review() {
                     *)      max_rounds=3 ;;
                 esac
                 local loop_rc=0
-                _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log" || loop_rc=$?
+                _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log" "$TIER_OUTPUT" || loop_rc=$?
                 if [[ $loop_rc -eq 0 ]]; then
                     tier_succeeded=true
                     break
@@ -210,6 +210,7 @@ _tiered_review() {
 _review_fix_loop() {
     local repo_root="$1" merge_target="$2" epic_num="$3" title="$4"
     local short_name="$5" tier="$6" max_rounds="$7" events_log="$8"
+    local initial_tier_output="${9:-}"
     local attempt=0
     local -a _issue_counts=()
 
@@ -219,14 +220,19 @@ _review_fix_loop() {
         _emit_event "$events_log" "review_convergence_round" \
             "{\"tier\":\"$tier\",\"round\":$attempt,\"max\":$max_rounds}"
 
-        # ─ RE-REVIEW: Call the tier function directly ─
+        # ─ RE-REVIEW (or use cached initial output on first round) ─
         local rc=0
-        case "$tier" in
-            cli)    _tier_coderabbit_cli "$repo_root" "$merge_target" || rc=$? ;;
-            codex)  _tier_codex "$repo_root" "$merge_target" || rc=$? ;;
-            self)   _tier_claude_self_review "$repo_root" "$merge_target" "$epic_num" "$title" || rc=$? ;;
-            *)      log ERROR "Unknown tier: $tier"; return 1 ;;
-        esac
+        if [[ $attempt -eq 1 ]] && [[ -n "$initial_tier_output" ]]; then
+            TIER_OUTPUT="$initial_tier_output"
+            rc=1
+        else
+            case "$tier" in
+                cli)    _tier_coderabbit_cli "$repo_root" "$merge_target" || rc=$? ;;
+                codex)  _tier_codex "$repo_root" "$merge_target" || rc=$? ;;
+                self)   _tier_claude_self_review "$repo_root" "$merge_target" "$epic_num" "$title" || rc=$? ;;
+                *)      log ERROR "Unknown tier: $tier"; return 1 ;;
+            esac
+        fi
 
         case $rc in
             0)  # Clean — all issues resolved
