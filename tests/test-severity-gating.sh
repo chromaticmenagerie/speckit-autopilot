@@ -75,6 +75,86 @@ l=$(echo "$result3" | awk '{print $4}'); l=${l:-0}
 (( c + h == 0 )) && pass "LOW-only: crit+high == 0" || fail "LOW-only: crit+high == 0"
 [[ "$l" == "2" ]] && pass "LOW-only: low count == 2" || fail "LOW-only: low count == 2 (got: '$l')"
 
+# ─── _classify_security_severity_from_string tests ─────────────────────
+
+# Define string-based classifier inline for testing
+_classify_security_severity_from_string() {
+    local content="$1"
+    local critical_count high_count medium_count low_count
+    critical_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: CRITICAL' 2>/dev/null) || critical_count=0
+    high_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: HIGH' 2>/dev/null) || high_count=0
+    medium_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: MEDIUM' 2>/dev/null) || medium_count=0
+    low_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: LOW' 2>/dev/null) || low_count=0
+    echo "$critical_count $high_count $medium_count $low_count"
+}
+
+# Structural: function exists in source
+grep -q '_classify_security_severity_from_string()' "$GATES_FILE" && pass "_classify_security_severity_from_string defined" || fail "_classify_security_severity_from_string defined"
+
+# Mixed severities via string
+mixed_str="- **Severity**: CRITICAL — SQL injection
+- **Severity**: HIGH — Missing rate limit
+- **Severity**: MEDIUM — Verbose errors
+- **Severity**: LOW — Missing headers
+- **Severity**: HIGH — Open redirect"
+result_s=$(_classify_security_severity_from_string "$mixed_str")
+[[ "$(echo "$result_s" | awk '{print $1}')" == "1" ]] && pass "String: 1 CRITICAL" || fail "String: 1 CRITICAL (got $(echo "$result_s" | awk '{print $1}'))"
+[[ "$(echo "$result_s" | awk '{print $2}')" == "2" ]] && pass "String: 2 HIGH" || fail "String: 2 HIGH"
+[[ "$(echo "$result_s" | awk '{print $3}')" == "1" ]] && pass "String: 1 MEDIUM" || fail "String: 1 MEDIUM"
+[[ "$(echo "$result_s" | awk '{print $4}')" == "1" ]] && pass "String: 1 LOW" || fail "String: 1 LOW"
+
+# Empty string
+result_empty=$(_classify_security_severity_from_string "")
+result_empty_clean=$(echo "$result_empty" | tr -s ' ' | xargs)
+[[ "$result_empty_clean" == "0 0 0 0" ]] && pass "String empty: all zeros" || fail "String empty: all zeros (got: '$result_empty_clean')"
+
+# LOW-only string
+low_str="- **Severity**: LOW — Missing CSP
+- **Severity**: LOW — No HSTS
+- **Severity**: LOW — No X-Frame"
+result_low=$(_classify_security_severity_from_string "$low_str")
+low_c=$(echo "$result_low" | awk '{print $1}'); low_c=${low_c:-0}
+low_h=$(echo "$result_low" | awk '{print $2}'); low_h=${low_h:-0}
+low_l=$(echo "$result_low" | awk '{print $4}'); low_l=${low_l:-0}
+(( low_c + low_h == 0 )) && pass "String LOW-only: crit+high == 0" || fail "String LOW-only: crit+high == 0"
+[[ "$low_l" == "3" ]] && pass "String LOW-only: low count == 3" || fail "String LOW-only: low count == 3 (got '$low_l')"
+
+# HIGH-only string
+high_str="- **Severity**: HIGH — Auth bypass
+- **Severity**: HIGH — SSRF"
+result_high=$(_classify_security_severity_from_string "$high_str")
+high_c=$(echo "$result_high" | awk '{print $1}'); high_c=${high_c:-0}
+high_h=$(echo "$result_high" | awk '{print $2}'); high_h=${high_h:-0}
+high_m=$(echo "$result_high" | awk '{print $3}'); high_m=${high_m:-0}
+high_lo=$(echo "$result_high" | awk '{print $4}'); high_lo=${high_lo:-0}
+[[ "$high_c" == "0" ]] && pass "String HIGH-only: 0 critical" || fail "String HIGH-only: 0 critical"
+[[ "$high_h" == "2" ]] && pass "String HIGH-only: 2 high" || fail "String HIGH-only: 2 high"
+[[ "$high_m" == "0" ]] && pass "String HIGH-only: 0 medium" || fail "String HIGH-only: 0 medium"
+[[ "$high_lo" == "0" ]] && pass "String HIGH-only: 0 low" || fail "String HIGH-only: 0 low"
+
+# ─── Structural: MEDIUM elif case exists ───────────────────────────────
+grep -q 'SECURITY_MIN_SEVERITY_TO_HALT.*MEDIUM.*crit.*high.*med' "$GATES_FILE" && pass "MEDIUM elif case exists" || fail "MEDIUM elif case exists"
+
+# ─── Structural: LOW escape hatch exists ───────────────────────────────
+grep -q 'LOW escape hatch' "$GATES_FILE" && pass "LOW escape hatch comment exists" || fail "LOW escape hatch comment exists"
+grep -q 'low_escape=true' "$GATES_FILE" && pass "low_escape assignment exists" || fail "low_escape assignment exists"
+
+# ─── Structural: low_escape variable declared ─────────────────────────
+grep -q 'local low_escape=false' "$GATES_FILE" && pass "low_escape variable declared" || fail "low_escape variable declared"
+grep -q 'local low_count=0' "$GATES_FILE" && pass "low_count variable declared" || fail "low_count variable declared"
+
+# ─── Structural: temp_findings_file rename (no shadowing) ─────────────
+grep -q 'local temp_findings_file' "$GATES_FILE" && pass "temp_findings_file declared (no shadowing)" || fail "temp_findings_file declared (no shadowing)"
+
+# ─── Structural: string-based severity on line 124 area ───────────────
+grep -q '_classify_security_severity_from_string "\$latest_findings"' "$GATES_FILE" && pass "Uses string-based severity classifier" || fail "Uses string-based severity classifier"
+
+# ─── Structural: log exit code on invoke_claude ───────────────────────
+grep -q 'security-review exited with code' "$GATES_FILE" && pass "Logs exit code on invoke_claude failure" || fail "Logs exit code on invoke_claude failure"
+
+# ─── Structural: conditional commit message ───────────────────────────
+grep -q 'accepted LOW findings' "$GATES_FILE" && pass "Conditional commit msg for LOW escape" || fail "Conditional commit msg for LOW escape"
+
 # ─── Structural: severity halt path exists ──────────────────────────────
 grep -q 'halting regardless of SECURITY_FORCE_SKIP_ALLOWED' "$GATES_FILE" && pass "Severity check before force-skip exists" || fail "Severity check before force-skip exists"
 grep -q 'SECURITY_MIN_SEVERITY_TO_HALT=.*HIGH' "$GATES_FILE" && pass "SECURITY_MIN_SEVERITY_TO_HALT default is HIGH" || fail "SECURITY_MIN_SEVERITY_TO_HALT default is HIGH"
