@@ -26,6 +26,20 @@ warn()  { echo -e "${YELLOW}[autopilot]${RESET} $1"; }
 error() { echo -e "${RED}[autopilot]${RESET} $1" >&2; }
 die()   { error "$1"; exit 1; }
 
+# ─── Argument parsing ────────────────────────────────────────────────────────
+DETECT_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --detect) DETECT_ONLY=true ;;
+        -h|--help)
+            echo "Usage: install.sh [--detect]"
+            echo "  --detect  Re-run tool detection and patch project.env (requires prior install)"
+            exit 0
+            ;;
+        *) die "Unknown flag: $arg" ;;
+    esac
+done
+
 # ─── Step 1: Preflight — verify Spec Kit installed ──────────────────────────
 
 if [[ ! -d ".specify" ]]; then
@@ -44,6 +58,16 @@ if [[ ! -d ".specify/templates" ]]; then
 fi
 
 info "Spec Kit detected"
+
+if [[ "$DETECT_ONLY" == true ]]; then
+    DETECT_SCRIPT=".specify/scripts/bash/autopilot-detect-project.sh"
+    if [[ ! -f "$DETECT_SCRIPT" ]]; then
+        die "Autopilot not installed yet. Run install.sh first (without --detect)."
+    fi
+    info "Re-running project detection (--patch mode)..."
+    bash "$DETECT_SCRIPT" --patch
+    exit 0
+fi
 
 # ─── Step 2: Determine source directory ──────────────────────────────────────
 
@@ -192,7 +216,8 @@ if [[ ! -f ".specify/project.env" ]]; then
         warn "Could not run project detection — create .specify/project.env manually"
     fi
 else
-    info "project.env already exists — skipping detection (use --force to regenerate)"
+    info "Patching project.env with any missing variables..."
+    bash "$DEST/autopilot-detect-project.sh" --patch
 fi
 
 # ─── Step 8: Cleanup ────────────────────────────────────────────────────────

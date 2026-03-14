@@ -125,23 +125,46 @@ OUTPUT5=$(cd "$TEST5_DIR" && bash "$REPO_ROOT/install.sh" 2>&1 || true)
 
 assert "error mentions incomplete" "echo '$OUTPUT5' | grep -q 'incomplete'"
 
-# ─── Test 6: project.env not overwritten on upgrade ─────────────────────────
+# ─── Test 6: project.env custom values preserved + new vars patched on upgrade ──
 
 echo ""
-echo -e "${BOLD}Test 6: project.env preserved on upgrade${RESET}"
+echo -e "${BOLD}Test 6: project.env preserved and patched on upgrade${RESET}"
 
 echo "0.0.9" > "$TEST1_DIR/.specify/autopilot-version"
-echo 'PROJECT_TEST_CMD="custom test cmd"' > "$TEST1_DIR/.specify/project.env"
+cat > "$TEST1_DIR/.specify/project.env" <<'ENVEOF'
+PROJECT_TEST_CMD="custom test cmd"
+BASE_BRANCH="develop"
+ENVEOF
 
 (cd "$TEST1_DIR" && bash "$REPO_ROOT/install.sh") > /dev/null 2>&1
 
 PRESERVED_CMD=$(grep 'PROJECT_TEST_CMD' "$TEST1_DIR/.specify/project.env" || true)
-assert "project.env preserved" "echo '$PRESERVED_CMD' | grep -q 'custom test cmd'"
+assert "custom PROJECT_TEST_CMD preserved" "echo '$PRESERVED_CMD' | grep -q 'custom test cmd'"
 
-# ─── Test 7: Legacy .claude/commands/ cleaned up on upgrade ──────────────────
+PRESERVED_BRANCH=$(grep 'BASE_BRANCH' "$TEST1_DIR/.specify/project.env" || true)
+assert "custom BASE_BRANCH preserved" "echo '$PRESERVED_BRANCH' | grep -q 'develop'"
+
+# ─── Test 7: --detect flag requires prior install ──
 
 echo ""
-echo -e "${BOLD}Test 7: Legacy commands cleaned up on upgrade${RESET}"
+echo -e "${BOLD}Test 7: --detect requires prior install${RESET}"
+
+TEST_DETECT_DIR=$(mktemp -d)
+mkdir -p "$TEST_DETECT_DIR/.specify"
+# Don't install autopilot — just have .specify from Spec Kit
+mkdir -p "$TEST_DETECT_DIR/.specify/scripts/bash"
+cp "$REPO_ROOT/src/common.sh" "$TEST_DETECT_DIR/.specify/scripts/bash/"
+mkdir -p "$TEST_DETECT_DIR/.specify/templates"
+
+DETECT_OUT=$( (cd "$TEST_DETECT_DIR" && bash "$REPO_ROOT/install.sh" --detect) 2>&1 || true)
+assert "--detect fails without autopilot" "echo '$DETECT_OUT' | grep -qi 'not installed'"
+
+rm -rf "$TEST_DETECT_DIR"
+
+# ─── Test 8: Legacy .claude/commands/ cleaned up on upgrade ──────────────────
+
+echo ""
+echo -e "${BOLD}Test 8: Legacy commands cleaned up on upgrade${RESET}"
 
 mkdir -p "$TEST1_DIR/.claude/commands"
 echo "old" > "$TEST1_DIR/.claude/commands/autopilot.md"
@@ -152,9 +175,9 @@ echo "0.0.1" > "$TEST1_DIR/.specify/autopilot-version"
 assert "legacy command removed" "[[ ! -f '$TEST1_DIR/.claude/commands/autopilot.md' ]]"
 assert "skill in new location" "[[ -f '$TEST1_DIR/.claude/skills/autopilot/SKILL.md' ]]"
 
-# ── Template and validate script ──
+# ── Test 9: Template and validate script ──
 echo ""
-echo -e "${BOLD}Test 8: Template & Validate Script${RESET}"
+echo -e "${BOLD}Test 9: Template & Validate Script${RESET}"
 
 # Check template exists
 if [[ -f "$SCRIPT_DIR/../templates/TEMPLATE-epic.md" ]]; then
