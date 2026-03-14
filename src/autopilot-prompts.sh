@@ -53,13 +53,19 @@ EOF
 
 prompt_clarify() {
     local epic_num="$1" title="$2" epic_file="$3" repo_root="$4" spec_dir="$5"
-    local round="${6:-1}" max_rounds="${7:-5}"
+    local round="${6:-1}" max_rounds="${7:-8}"
+    local clarify_total="${8:-}" clarify_cycle_num="${9:-}"
     local spec_dir_name
     spec_dir_name="$(basename "$spec_dir")"
     cat <<EOF
 $(_preamble "$epic_num" "$title" "$repo_root")
 
 Read the epic file at ${epic_file} for reference context, then read ${spec_dir}/spec.md.
+
+If \`<!-- VERIFY_FINDINGS: ... -->\` comments exist in spec.md from a previous
+clarify-verify rejection, prioritise addressing those issues first. After addressing
+them, remove the resolved VERIFY_FINDINGS comment block. Then continue your normal
+ambiguity scan.
 
 Invoke the Skill tool ONCE:
   skill = "speckit.clarify"
@@ -78,17 +84,17 @@ If ZERO observations (the skill reports no issues or underspecified areas):
      <!-- CLARIFY_COMPLETE -->
   2. Commit:
      git add specs/${spec_dir_name}/
-     git commit -m "docs(${epic_num}): clarify round ${round}/${max_rounds} — zero observations"
+     git commit -m "docs(${epic_num}): clarify round ${round}/${max_rounds}$([ -n "${clarify_total}" ] && echo " (cycle ${clarify_cycle_num}, total ${clarify_total})") — zero observations"
 
 If observations WERE found (the skill reported issues, questions, or underspecified areas):
   1. Ensure all fixes and answers have been applied to spec.md
   2. Do NOT add <!-- CLARIFY_COMPLETE -->
   3. Commit fixes:
      git add specs/${spec_dir_name}/
-     git commit -m "fix(${epic_num}): clarify round ${round}/${max_rounds} — resolve observations"
+     git commit -m "fix(${epic_num}): clarify round ${round}/${max_rounds}$([ -n "${clarify_total}" ] && echo " (cycle ${clarify_cycle_num}, total ${clarify_total})") — resolve observations"
 
 The orchestrator will re-run /speckit.clarify in a fresh context until zero observations
-are reported, up to a maximum of 5 rounds.
+are reported, up to a maximum of 8 rounds.
 EOF
 }
 
