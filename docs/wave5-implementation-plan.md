@@ -1,9 +1,9 @@
 # Wave 5 Implementation Plan — Requirements Gate Hardening + Recheck Phase
 
-**Version:** 0.12.0 (target)
+**Version:** 0.12.0 (shipped)
 **Predecessor:** Wave 4 (v0.11.x) — secret scanning & branch scoping
 **Date:** 2026-03-14
-**Status:** DRAFT — awaiting approval
+**Status:** SHIPPED in v0.12.0
 **Investigation rounds:** 5 (see conversation history for full audit trail)
 
 ---
