@@ -203,7 +203,7 @@ _tiered_review() {
 # Parameters:
 #   repo_root, merge_target, epic_num, title, short_name — pipeline context
 #   tier       — which tier to re-run for re-review (cli|codex|self)
-#   max_rounds — per-tier convergence limit (CLI=3, Codex=3, Claude=2)
+#   max_rounds — per-tier convergence limit (CLI=2, Codex=2, Claude=2)
 #
 # Returns: 0 (clean or force-advanced), 1 (halted — issues remain)
 
@@ -213,6 +213,7 @@ _review_fix_loop() {
     local initial_tier_output="${9:-}"
     local attempt=0
     local -a _issue_counts=()
+    local max_rate_limit_hits=3
 
     while [[ $attempt -lt $max_rounds ]]; do
         attempt=$((attempt + 1))
@@ -314,13 +315,19 @@ _review_fix_loop() {
         fix_prompt="$(prompt_review_fix "$tier" "$epic_num" "$title" "$repo_root" "$short_name" "$_review_file")"
         rm -f "$_review_file"
         local _fix_rc=0
-        invoke_claude "review-fix" "$fix_prompt" "$epic_num" "$title" || _fix_rc=$?
-        if [[ $_fix_rc -eq 42 ]]; then
-            log WARN "Rate limit hit during fix (round $attempt) — skipping round"
+        local _rate_retries=0
+        while true; do
+            _fix_rc=0
+            invoke_claude "review-fix" "$fix_prompt" "$epic_num" "$title" || _fix_rc=$?
+            if [[ $_fix_rc -ne 42 ]]; then break; fi
+            _rate_retries=$((_rate_retries + 1))
+            log WARN "Rate limit hit during fix (round $attempt, retry $_rate_retries/$max_rate_limit_hits)"
             _emit_event "$events_log" "review_fix_rate_limited" \
-                "{\"tier\":\"$tier\",\"round\":$attempt}"
-            continue
-        elif [[ $_fix_rc -ne 0 ]]; then
+                "{\"tier\":\"$tier\",\"round\":$attempt,\"retry\":$_rate_retries}"
+            if (( _rate_retries >= max_rate_limit_hits )); then break; fi
+            sleep $(( 30 * _rate_retries ))
+        done
+        if [[ $_fix_rc -ne 0 ]]; then
             log WARN "Review fix invocation failed (round $attempt, rc=$_fix_rc)"
         fi
         # Claude Code commits changes directly; next loop iteration re-reviews.

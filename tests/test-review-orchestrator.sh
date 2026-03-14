@@ -28,7 +28,8 @@ assert_eq() {
 
 log() { :; }
 _emit_event() { :; }
-invoke_claude() { return 0; }
+sleep() { :; }
+invoke_claude() { _invoke_stub; }
 prompt_review_fix() { echo "fix prompt stub"; }
 prompt_self_review() { echo "self review prompt stub"; }
 prompt_self_review_chunk() { echo "chunk prompt stub"; }
@@ -52,11 +53,22 @@ _tier_stub() {
     return "$rc"
 }
 
+_INVOKE_STUB_RC_SEQ=()
+_INVOKE_STUB_CALL=0
+_invoke_stub() {
+    local rc=${_INVOKE_STUB_RC_SEQ[$_INVOKE_STUB_CALL]:-0}
+    _INVOKE_STUB_CALL=$((_INVOKE_STUB_CALL + 1))
+    return "$rc"
+}
+
 _reset_stubs() {
     _STUB_RC_SEQ=()
     _STUB_CALL=0
+    _INVOKE_STUB_RC_SEQ=()
+    _INVOKE_STUB_CALL=0
     TIER_OUTPUT=""
     LAST_CR_STATUS=""
+    invoke_claude() { _invoke_stub; }
 }
 
 # ─── Tests: _tiered_review orchestrator ─────────────────────────────────────
@@ -175,7 +187,7 @@ assert_eq "2" "$rc" "tier-error-mid-loop: returns 2 (signals caller to try next 
 _reset_stubs
 _STUB_RC_SEQ=(1 1)
 _tier_coderabbit_cli() { _tier_stub; }
-invoke_claude() { return 42; }
+_INVOKE_STUB_RC_SEQ=(42 42 42 42 42 42)
 FORCE_ADVANCE_ON_REVIEW_ERROR=true
 FORCE_ADVANCE_ON_REVIEW_STALL=false
 CONVERGENCE_STALL_ROUNDS=99
@@ -183,8 +195,46 @@ DIMINISHING_RETURNS_THRESHOLD=99
 
 rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" "" || rc=$?
 assert_eq "3" "$rc" "rate-limit-fix: force-advances after max rounds (rc=3)"
-# Restore default stub
-invoke_claude() { return 0; }
+
+# Test 10: Transient rate limit recovery (inner retry succeeds)
+_reset_stubs
+_STUB_RC_SEQ=(0)
+_tier_coderabbit_cli() { _tier_stub; }
+_INVOKE_STUB_RC_SEQ=(42 42 0)
+FORCE_ADVANCE_ON_REVIEW_ERROR=false
+FORCE_ADVANCE_ON_REVIEW_STALL=false
+CONVERGENCE_STALL_ROUNDS=99
+DIMINISHING_RETURNS_THRESHOLD=99
+
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" "CRITICAL: stub finding" || rc=$?
+assert_eq "0" "$rc" "transient-rate-limit: recovers after inner retries, clean on round 2"
+
+# Test 11: Rate limit cap exhaustion without force-advance
+_reset_stubs
+_STUB_RC_SEQ=(1 1)
+_tier_coderabbit_cli() { _tier_stub; }
+_INVOKE_STUB_RC_SEQ=(42 42 42 42 42 42)
+FORCE_ADVANCE_ON_REVIEW_ERROR=false
+FORCE_ADVANCE_ON_REVIEW_STALL=false
+CONVERGENCE_STALL_ROUNDS=99
+DIMINISHING_RETURNS_THRESHOLD=99
+
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" "CRITICAL: stub finding" || rc=$?
+assert_eq "1" "$rc" "rate-limit-cap-no-force: halts after max rounds (rc=1)"
+
+# Test 12: Call-count regression (no unnecessary retries on success)
+_reset_stubs
+_STUB_RC_SEQ=(0)
+_tier_coderabbit_cli() { _tier_stub; }
+_INVOKE_STUB_RC_SEQ=(0)
+FORCE_ADVANCE_ON_REVIEW_ERROR=false
+FORCE_ADVANCE_ON_REVIEW_STALL=false
+CONVERGENCE_STALL_ROUNDS=99
+DIMINISHING_RETURNS_THRESHOLD=99
+
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" "CRITICAL: stub finding" || rc=$?
+assert_eq "0" "$rc" "call-count: converges clean"
+assert_eq "1" "$_INVOKE_STUB_CALL" "call-count: invoke_claude called exactly once"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 
