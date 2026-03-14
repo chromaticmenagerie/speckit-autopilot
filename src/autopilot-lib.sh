@@ -464,14 +464,8 @@ write_epic_summary() {
     mkdir -p "$log_dir"
 
     local files_changed test_output lint_output
-    # Count feature files by finding this epic's merge/squash commit in the log.
-    # Works for both --no-ff merges ("merge: short_name — ...") and squash
-    # merges ("feat(NNN): ..."), and is immune to intervening commits
-    # (YAML marker, crystallize phase).
-    local epic_sha
-    epic_sha=$(git -C "$repo_root" log --oneline 2>/dev/null \
-        | grep -iE "(merge.*${short_name}|feat\(${epic_num}\):)" \
-        | head -1 | awk '{print $1}' || true)
+    # Use already-captured LAST_MERGE_SHA (set during merge gate) for diff stats
+    local epic_sha="${LAST_MERGE_SHA:-}"
     if [[ -n "$epic_sha" ]]; then
         files_changed=$(git -C "$repo_root" diff --name-only "${epic_sha}^..${epic_sha}" 2>/dev/null | wc -l || echo 0)
     else

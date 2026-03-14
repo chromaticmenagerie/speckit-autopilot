@@ -462,13 +462,11 @@ _post_merge_cleanup() {
     }
 
     # Capture merge commit SHA before YAML marker commit moves HEAD forward
-    LAST_MERGE_SHA=$(git -C "$repo_root" log --oneline 2>/dev/null \
-        | grep -iE "(merge.*${short_name}|feat\(${epic_num}\):)" \
-        | head -1 | awk '{print $1}' || true)
+    LAST_MERGE_SHA=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)
     if [[ -n "$LAST_MERGE_SHA" ]]; then
         log INFO "Merge commit SHA: $LAST_MERGE_SHA"
     else
-        log WARN "Could not identify merge commit SHA — crystallize diff may be incomplete"
+        log WARN "Could not capture merge commit SHA — crystallize diff may be incomplete"
     fi
 
     # Step 2: Mark epic as merged on the BASE branch (durable state)
