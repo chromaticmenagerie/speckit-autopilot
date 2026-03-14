@@ -209,15 +209,78 @@ pass_count=$(grep -c ': PASS' "$findings_file" 2>/dev/null || echo 0)
 partial_count=$(grep -c ': PARTIAL' "$findings_file" 2>/dev/null || echo 0)
 deferred_count=$(grep -c ': DEFERRED' "$findings_file" 2>/dev/null || echo 0)
 not_found_count=$(grep -c ': NOT_FOUND' "$findings_file" 2>/dev/null || echo 0)
-total=$((pass_count + partial_count + deferred_count + not_found_count))
-safe_count=$((pass_count + partial_count + deferred_count))
-pct=$((safe_count * 100 / total))
+safe_count=$((pass_count + partial_count))
+actionable=$((pass_count + partial_count + not_found_count))
+pct=$((safe_count * 100 / actionable))
 
 assert_eq "2" "$pass_count" "pass_count=2"
 assert_eq "1" "$partial_count" "partial_count=1"
 assert_eq "1" "$deferred_count" "deferred_count=1"
 assert_eq "1" "$not_found_count" "not_found_count=1"
-assert_eq "80" "$pct" "coverage pct=80 (4/5)"
+assert_eq "75" "$pct" "coverage pct=75 (3/4 actionable)"
+
+# ─── Test: all DEFERRED (actionable=0) → no division by zero ─────────────
+
+echo "Test: all DEFERRED → actionable=0, no division by zero"
+
+cat > "$findings_dir/requirement-findings.md" <<'EOF'
+FR-001: DEFERRED
+FR-002: DEFERRED
+FR-003: DEFERRED
+EOF
+
+pass_count=$(grep -c ': PASS' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+partial_count=$(grep -c ': PARTIAL' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+deferred_count=$(grep -c ': DEFERRED' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+not_found_count=$(grep -c ': NOT_FOUND' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+safe_count=$((pass_count + partial_count))
+actionable=$((pass_count + partial_count + not_found_count))
+assert_eq "0" "$actionable" "all-DEFERRED: actionable=0"
+assert_eq "0" "$safe_count" "all-DEFERRED: safe_count=0"
+
+# ─── Test: 0 PASS + 0 PARTIAL + 1 NOT_FOUND + 10 DEFERRED ──────────────
+
+echo "Test: 0 PASS + 0 PARTIAL + 1 NOT_FOUND + 10 DEFERRED → pct=0"
+
+cat > "$findings_dir/requirement-findings.md" <<'EOF'
+FR-001: NOT_FOUND
+FR-002: DEFERRED
+FR-003: DEFERRED
+FR-004: DEFERRED
+FR-005: DEFERRED
+FR-006: DEFERRED
+FR-007: DEFERRED
+FR-008: DEFERRED
+FR-009: DEFERRED
+FR-010: DEFERRED
+FR-011: DEFERRED
+EOF
+
+pass_count=$(grep -c ': PASS' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+partial_count=$(grep -c ': PARTIAL' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+not_found_count=$(grep -c ': NOT_FOUND' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+safe_count=$((pass_count + partial_count))
+actionable=$((pass_count + partial_count + not_found_count))
+pct=$((safe_count * 100 / actionable))
+assert_eq "1" "$actionable" "1-NOT_FOUND+10-DEFERRED: actionable=1"
+assert_eq "0" "$pct" "1-NOT_FOUND+10-DEFERRED: pct=0"
+
+# ─── Test: single FR (1 PASS) → actionable=1, pct=100% ─────────────────
+
+echo "Test: single FR (1 PASS) → pct=100"
+
+cat > "$findings_dir/requirement-findings.md" <<'EOF'
+FR-001: PASS
+EOF
+
+pass_count=$(grep -c ': PASS' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+partial_count=$(grep -c ': PARTIAL' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+not_found_count=$(grep -c ': NOT_FOUND' "$findings_dir/requirement-findings.md" 2>/dev/null) || true
+safe_count=$((pass_count + partial_count))
+actionable=$((pass_count + partial_count + not_found_count))
+pct=$((safe_count * 100 / actionable))
+assert_eq "1" "$actionable" "single-PASS: actionable=1"
+assert_eq "100" "$pct" "single-PASS: pct=100"
 
 echo "Test: all-PASS findings have no NOT_FOUND or PARTIAL"
 
