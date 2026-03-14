@@ -324,6 +324,9 @@ invoke_claude() {
     export REPO_ROOT
 
     local exit_code=0
+
+    # Circuit breaker: wait if Claude has been failing
+    _cb_gate || return 99
     env -u CLAUDECODE claude -p "Read the file ${prompt_file} and follow ALL instructions within it exactly." \
         --model "$model" \
         --allowedTools "$tools" \
@@ -331,6 +334,13 @@ invoke_claude() {
         --verbose \
         --dangerously-skip-permissions \
         2>&1 | process_stream "$epic_num" "$phase" || exit_code=$?
+
+    # Circuit breaker: record outcome
+    if [[ $exit_code -eq 42 ]]; then
+        _cb_record_failure
+    elif [[ $exit_code -eq 0 ]]; then
+        _cb_record_success
+    fi
 
     # Clean up prompt temp file
     rm -f "$prompt_file"
@@ -1044,7 +1054,11 @@ run_epic() {
                 fi
             else
                 retries=$((retries + 1))
-                if [[ $phase_exit -eq 42 ]]; then
+                if [[ $phase_exit -eq 99 ]]; then
+                    log ERROR "Prolonged API outage — Claude unreachable. Halting epic."
+                    log ERROR "Resume when service recovers: ./autopilot.sh $epic_num"
+                    return 1
+                elif [[ $phase_exit -eq 42 ]]; then
                     local backoff=$((30 * retries))
                     log WARN "Rate limited — backing off ${backoff}s before retry $retries/${PHASE_MAX_RETRIES[$state]:-3}"
                     sleep "$backoff"

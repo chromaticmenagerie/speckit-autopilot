@@ -38,6 +38,55 @@ CODEX_REVIEW_TIMEOUT=300
 CRYSTALLIZE_MAX_DIFF_CHARS=50000
 STUB_ENFORCEMENT_LEVEL="warn"
 
+
+# ─── Circuit Breaker State ───────────────────────────────────────────────────
+_CB_CONSECUTIVE_FAILURES=0
+_CB_CUMULATIVE_WAIT=0
+_CB_COOLDOWN=30
+_CB_MAX_CUMULATIVE_WAIT=86400  # 24 hours
+
+# Circuit breaker: check if we should wait before calling Claude
+# Returns 0 if OK to proceed, 99 if give-up threshold reached
+_cb_gate() {
+    [[ $_CB_CONSECUTIVE_FAILURES -lt 3 ]] && return 0
+
+    # Check give-up threshold (24 hours cumulative wait)
+    if [[ $_CB_CUMULATIVE_WAIT -ge $_CB_MAX_CUMULATIVE_WAIT ]]; then
+        log ERROR "Circuit breaker: Claude unreachable for $((_CB_CUMULATIVE_WAIT / 3600))h — giving up"
+        return 99
+    fi
+
+    log WARN "Circuit breaker open ($_CB_CONSECUTIVE_FAILURES consecutive failures) — backing off ${_CB_COOLDOWN}s"
+    sleep "$_CB_COOLDOWN"
+    _CB_CUMULATIVE_WAIT=$((_CB_CUMULATIVE_WAIT + _CB_COOLDOWN))
+
+    # Escalate cooldown: 30 → 60 → 120 → 300 → 1800 (cap)
+    if [[ $_CB_COOLDOWN -lt 300 ]]; then
+        _CB_COOLDOWN=$((_CB_COOLDOWN * 2))
+        [[ $_CB_COOLDOWN -gt 300 ]] && _CB_COOLDOWN=300
+    elif [[ $_CB_CUMULATIVE_WAIT -ge 1200 ]]; then
+        # After 20 min cumulative, switch to 30-min intervals
+        _CB_COOLDOWN=1800
+    fi
+
+    return 0
+}
+
+# Circuit breaker: record a rate-limit failure
+_cb_record_failure() {
+    _CB_CONSECUTIVE_FAILURES=$((_CB_CONSECUTIVE_FAILURES + 1))
+    log WARN "Circuit breaker: failure $_CB_CONSECUTIVE_FAILURES (cooldown ${_CB_COOLDOWN}s)"
+}
+
+# Circuit breaker: record success, reset state
+_cb_record_success() {
+    if [[ $_CB_CONSECUTIVE_FAILURES -gt 0 ]]; then
+        log OK "Circuit breaker: Claude recovered after $_CB_CONSECUTIVE_FAILURES failures (${_CB_CUMULATIVE_WAIT}s total wait)"
+    fi
+    _CB_CONSECUTIVE_FAILURES=0
+    _CB_CUMULATIVE_WAIT=0
+    _CB_COOLDOWN=30
+}
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
 AUTOPILOT_LOG=""
