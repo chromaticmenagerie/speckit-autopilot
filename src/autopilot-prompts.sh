@@ -910,6 +910,13 @@ architectural understanding.
       - Example: "Use db.Pool for connections — DO NOT create raw pgx connections"
       - Anti-patterns prevent agents from reinventing what already exists
 
+      Pruning stale entries (apply BEFORE adding new content):
+      - Remove module-map lines whose source file was DELETED in this epic's diff
+      - Remove utility entries for functions no longer in the codebase
+      - When two pattern rules share the same "DO NOT" target, consolidate into one rule
+      - Do NOT delete any pattern rule outright — only consolidate duplicates
+      - Do NOT reduce total MANUAL ADDITIONS content below 15 lines
+
    b) .specify/memory/architecture.md:
       Create or update 2-4 mermaid diagrams that give a new AI agent immediate
       understanding of this codebase. Choose diagram types appropriate to this

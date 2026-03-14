@@ -976,6 +976,27 @@ run_epic() {
             if ! run_phase "crystallize" "$epic_num" "$short_name" "$title" "$epic_file" "$repo_root" "1" "1"; then
                 log WARN "Crystallize phase failed — continuing (non-blocking)"
             fi
+            # Post-crystallize validation (warn-only)
+            if [[ -f "$repo_root/CLAUDE.md" ]]; then
+                if ! grep -q '<!-- MANUAL ADDITIONS START -->' "$repo_root/CLAUDE.md" 2>/dev/null; then
+                    log WARN "crystallize: CLAUDE.md missing MANUAL ADDITIONS START marker"
+                elif ! grep -q '<!-- MANUAL ADDITIONS END -->' "$repo_root/CLAUDE.md" 2>/dev/null; then
+                    log WARN "crystallize: CLAUDE.md missing MANUAL ADDITIONS END marker"
+                else
+                    local manual_lines
+                    manual_lines=$(sed -n '/<!-- MANUAL ADDITIONS START -->/,/<!-- MANUAL ADDITIONS END -->/p' "$repo_root/CLAUDE.md" 2>/dev/null | wc -l | tr -d ' ')
+                    if [[ "$manual_lines" -gt 52 ]]; then
+                        log WARN "crystallize: CLAUDE.md MANUAL ADDITIONS is ${manual_lines} lines (budget: 50)"
+                    fi
+                fi
+            fi
+            if [[ -f "$repo_root/.specify/memory/architecture.md" ]]; then
+                local arch_lines
+                arch_lines=$(wc -l < "$repo_root/.specify/memory/architecture.md" 2>/dev/null | tr -d ' ')
+                if [[ "$arch_lines" -gt 120 ]]; then
+                    log WARN "crystallize: architecture.md is ${arch_lines} lines (budget: 120)"
+                fi
+            fi
             _accumulate_phase_cost "$repo_root"
 
             # Write post-epic summary
