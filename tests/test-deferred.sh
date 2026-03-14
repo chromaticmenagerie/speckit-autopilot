@@ -127,8 +127,8 @@ make_spec "005-phase-skip" "## Phase 1
 - [ ] Incomplete task P2"
 
 # Remove the ANALYZED marker for this specific test
-sed -i.bak '/<!-- ANALYZED -->/d' "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md" 2>/dev/null || \
-    sed -i '' '/<!-- ANALYZED -->/d' "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md"
+sed '/<!-- ANALYZED -->/d' "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md" > "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md.tmp" && \
+mv "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md.tmp" "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md"
 echo "<!-- ANALYZED -->" >> "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md"
 
 phase=$(get_current_impl_phase "$TMPDIR_ROOT/specs/005-phase-skip/tasks.md")

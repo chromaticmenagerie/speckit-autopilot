@@ -26,8 +26,9 @@ _run_requirements_gate() {
             return 1
         fi
         # Force-advance: add verified marker
-        sed -i '' '/<!-- REQUIREMENTS_FORCE_SKIPPED -->/a\
-<!-- REQUIREMENTS_VERIFIED -->' "$tasks_file"
+        sed '/<!-- REQUIREMENTS_FORCE_SKIPPED -->/a\
+<!-- REQUIREMENTS_VERIFIED -->' "$tasks_file" > "$tasks_file.tmp" && \
+        mv "$tasks_file.tmp" "$tasks_file"
         git -C "$repo_root" add "$tasks_file" && \
         git -C "$repo_root" commit -m "chore($epic_num): force-advance requirements verification" --no-verify 2>/dev/null || true
         log WARN "Requirements verification force-advanced"
