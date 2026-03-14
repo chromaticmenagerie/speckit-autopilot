@@ -514,7 +514,14 @@ Design note: `--strict` was chosen over `--fail-fast`/`--bail`/`--halt-on-failur
 - [ ] `FORCE_ADVANCE_ON_REVIEW_STALL=true` (with severity filter)
 - [ ] `FORCE_ADVANCE_ON_DIMINISHING_RETURNS=true` (with configurable threshold)
 
-### Wave 6 (future): Category 3 enhancements
+### Wave 6 (v0.12.0): Review loop efficiency + correctness
+- [x] Fix CODERABBIT_MAX_ROUNDS/CODEX_MAX_ROUNDS hard-assignment bug (honor project.env overrides)
+- [x] Fix SECURITY_MAX_ROUNDS fallback inconsistency (gates.sh :-2 vs lib.sh 3)
+- [x] Cache initial TIER_OUTPUT in _review_fix_loop (skip redundant Round 1 re-review)
+- [x] Detect rate-limit (exit 42) during review-fix; skip round instead of polluting convergence data
+- [x] Reduce CLI/Codex max_rounds default from 3 to 2 (review→fix→verify cycle)
+
+### Wave 7 (future): Category 3 enhancements
 
 - [ ] Active notification on security skip (GitHub issue, Slack)
 - [ ] Per-severity security gate (auto-advance LOW/MEDIUM, halt HIGH/CRITICAL)
