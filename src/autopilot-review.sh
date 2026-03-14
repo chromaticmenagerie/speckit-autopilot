@@ -313,9 +313,16 @@ _review_fix_loop() {
         local fix_prompt
         fix_prompt="$(prompt_review_fix "$tier" "$epic_num" "$title" "$repo_root" "$short_name" "$_review_file")"
         rm -f "$_review_file"
-        invoke_claude "review-fix" "$fix_prompt" "$epic_num" "$title" || {
-            log WARN "Review fix invocation failed (round $attempt)"
-        }
+        local _fix_rc=0
+        invoke_claude "review-fix" "$fix_prompt" "$epic_num" "$title" || _fix_rc=$?
+        if [[ $_fix_rc -eq 42 ]]; then
+            log WARN "Rate limit hit during fix (round $attempt) — skipping round"
+            _emit_event "$events_log" "review_fix_rate_limited" \
+                "{\"tier\":\"$tier\",\"round\":$attempt}"
+            continue
+        elif [[ $_fix_rc -ne 0 ]]; then
+            log WARN "Review fix invocation failed (round $attempt, rc=$_fix_rc)"
+        fi
         # Claude Code commits changes directly; next loop iteration re-reviews.
     done
 

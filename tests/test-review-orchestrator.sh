@@ -171,6 +171,21 @@ DIMINISHING_RETURNS_THRESHOLD=99
 rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 3 "/dev/null" "" || rc=$?
 assert_eq "2" "$rc" "tier-error-mid-loop: returns 2 (signals caller to try next tier)"
 
+# Test 9: Rate-limited fix skips round, loop exhausts max_rounds
+_reset_stubs
+_STUB_RC_SEQ=(1 1)
+_tier_coderabbit_cli() { _tier_stub; }
+invoke_claude() { return 42; }
+FORCE_ADVANCE_ON_REVIEW_ERROR=true
+FORCE_ADVANCE_ON_REVIEW_STALL=false
+CONVERGENCE_STALL_ROUNDS=99
+DIMINISHING_RETURNS_THRESHOLD=99
+
+rc=0; _review_fix_loop "/tmp" "main" "001" "test" "test-short" "cli" 2 "/dev/null" "" || rc=$?
+assert_eq "3" "$rc" "rate-limit-fix: force-advances after max rounds (rc=3)"
+# Restore default stub
+invoke_claude() { return 0; }
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo ""
