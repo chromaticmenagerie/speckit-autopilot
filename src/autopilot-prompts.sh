@@ -602,6 +602,80 @@ Do NOT add any HTML markers to tasks.md.
 EOF
 }
 
+prompt_security_verify() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4" round="$5" max_rounds="$6"
+    local spec_dir="${repo_root}/specs/${short_name}"
+    local findings_file="${spec_dir}/security-findings.md"
+
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+# Security Verify — Cycle ${round}/${max_rounds}
+
+You are independently verifying that security fixes from the previous review round
+were correctly applied. Your mandate is NOT "find everything" — it is
+"confirm the work is done."
+
+## Instructions
+
+1. Read the security findings file: ${findings_file}
+   Identify all findings from the latest Round section.
+
+2. For each finding, check the current code (use git diff HEAD~1 or read files directly):
+   - **RESOLVED**: Fix correctly closes the vulnerability. Cite commit/file:line evidence.
+   - **UNRESOLVED**: Finding still present or fix is incomplete/incorrect.
+   - **REGRESSED**: Fix introduced a new vulnerability.
+   - **ACCEPTED**: LOW-severity finding acknowledged with documented rationale.
+
+3. LOW-severity acceptance authority:
+   You may ACCEPT LOW findings IF:
+   - Real-world risk is mitigated (internal-only, defense-in-depth, narrow attack surface)
+   - Fixing would require refactoring outside epic scope
+   - Each ACCEPTED LOW must have an explicit rationale
+
+4. Spot-check for new CRITICAL/HIGH issues introduced by the fixes.
+   Do NOT re-run the full 7-item security checklist — only check the changed code.
+
+## Output
+
+Append a section to ${findings_file} in this exact format:
+
+\`\`\`markdown
+### Verify Cycle ${round}
+
+Verdict: PASS
+
+All CRITICAL/HIGH/MEDIUM findings resolved. N LOW findings accepted.
+
+| Finding | Status | Evidence |
+|---------|--------|----------|
+| Round N #M: title | RESOLVED | Commit abc fixes X at file:line |
+| Round N #M: title | ACCEPTED | Internal-only; mitigated by rate limiting |
+\`\`\`
+
+Or if issues remain:
+
+\`\`\`markdown
+### Verify Cycle ${round}
+
+Verdict: FAIL
+
+| Finding | Status | Evidence |
+|---------|--------|----------|
+| Round N #M: title | UNRESOLVED | No code changes found for this finding |
+| Round N #M: title | REGRESSED | Fix at file:line introduces new XSS vector |
+\`\`\`
+
+## Prohibitions
+
+- Do NOT modify source code (verification only)
+- Do NOT add HTML markers to tasks.md (orchestrator responsibility)
+- Do NOT commit any files
+- Do NOT re-run the full 7-item security checklist
+- Do NOT overwrite existing content in ${findings_file} — only APPEND
+EOF
+}
+
 # ─── Phase: Review ───────────────────────────────────────────────────────────
 
 prompt_review() {

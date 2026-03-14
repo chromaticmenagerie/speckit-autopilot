@@ -97,6 +97,23 @@ _emit_analyze_summary() {
         >> "$events_log"
 }
 
+# Emit a security_summary event to the events log.
+# Args: repo_root epic_num rounds verify_rejections force_advanced
+_emit_security_summary() {
+    local repo_root="$1" epic_num="$2" rounds="$3" verify_rejections="$4" force_advanced="$5"
+    local events_log="$repo_root/.specify/logs/events.jsonl"
+    mkdir -p "$(dirname "$events_log")"
+    jq -nc \
+        --arg event "security_summary" \
+        --arg epic "$epic_num" \
+        --argjson rounds "${rounds:-0}" \
+        --argjson verify_rejections "${verify_rejections:-0}" \
+        --argjson force_advanced "${force_advanced:-false}" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{event:$event, epic:$epic, rounds:$rounds, verify_rejections:$verify_rejections, force_advanced:$force_advanced, timestamp:$ts}' \
+        >> "$events_log"
+}
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 OPUS="opus"
@@ -123,6 +140,7 @@ declare -A PHASE_MODEL=(
     [requirements-fix]="$SONNET"
     [security-review]="$OPUS"
     [security-fix]="$OPUS"
+    [security-verify]="$OPUS"
     [self-review]="$OPUS"
     [review-fix]="$OPUS"
     [rebase-fix]="$OPUS"
@@ -150,6 +168,7 @@ declare -A PHASE_TOOLS=(
     [requirements-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [security-review]="Read,Write,Glob,Grep"
     [security-fix]="Read,Write,Edit,Bash,Glob,Grep"
+    [security-verify]="Read,Glob,Grep,Bash"
     [self-review]="Read,Glob,Grep,Bash"
     [review-fix]="Read,Write,Edit,Bash,Glob,Grep"
     [rebase-fix]="Read,Write,Edit,Bash,Glob,Grep"
@@ -177,6 +196,7 @@ declare -A PHASE_MAX_RETRIES=(
     [requirements-fix]=2
     [security-review]=1
     [security-fix]=1
+    [security-verify]=1
     [self-review]=1
     [review-fix]=3
     [rebase-fix]=3

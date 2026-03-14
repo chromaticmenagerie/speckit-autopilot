@@ -28,18 +28,30 @@ _classify_security_severity() {
     echo "$critical_count $high_count $medium_count $low_count"
 }
 
+_classify_security_severity_from_string() {
+    local content="$1"
+    local critical_count high_count medium_count low_count
+    critical_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: CRITICAL' 2>/dev/null) || critical_count=0
+    high_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: HIGH' 2>/dev/null) || high_count=0
+    medium_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: MEDIUM' 2>/dev/null) || medium_count=0
+    low_count=$(printf '%s' "$content" | grep -c '\*\*Severity\*\*: LOW' 2>/dev/null) || low_count=0
+    echo "$critical_count $high_count $medium_count $low_count"
+}
+
 # ─── Security Gate (review→fix loop) ─────────────────────────────────────
 
 _run_security_gate() {
     local repo_root="$1" epic_num="$2" short_name="$3" title="$4" epic_file="$5"
-    local max_rounds=${SECURITY_MAX_ROUNDS:-3}
+    local max_rounds=${SECURITY_MAX_ROUNDS:-2}
     local round=0
     local spec_dir="$repo_root/specs/$short_name"
     local findings_file="$spec_dir/security-findings.md"
     local tasks_file="$spec_dir/tasks.md"
     local verdict=""
+    local low_escape=false
+    local low_count=0
 
-    log PHASE "Security gate (max $max_rounds rounds)"
+    log PHASE "Security gate (max $max_rounds cycles: review→fix→verify)"
 
     # Resume guard: if previously halted, re-halt unless user opted in
     if [[ -f "$tasks_file" ]] && grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null && \
@@ -76,7 +88,7 @@ SEOF
         fi
 
         # 2. Run security-review (read-only + Write for findings file)
-        invoke_claude "security-review" "$prompt" "$epic_num" "$title" || true
+        invoke_claude "security-review" "$prompt" "$epic_num" "$title" || { log WARN "security-review exited with code $?" 2>/dev/null || true; }
         _accumulate_phase_cost "$repo_root"
 
         # 3. Parse verdict from the LAST "Verdict:" line in findings file
@@ -102,17 +114,52 @@ SEOF
         local latest_findings
         latest_findings=$(awk '/^## Round '"$round"'/{found=1} found' "$findings_file")
 
+        # LOW escape hatch: skip fix cycle when only LOW findings remain
+        if [[ "$SECURITY_MIN_SEVERITY_TO_HALT" != "LOW" ]]; then
+            local esc_sev
+            esc_sev=$(_classify_security_severity_from_string "$latest_findings")
+            local esc_crit esc_high esc_med esc_low
+            read -r esc_crit esc_high esc_med esc_low <<< "$esc_sev"
+            if (( esc_crit + esc_high + esc_med == 0 )) && (( esc_low > 0 )); then
+                log OK "Security review: only LOW findings — accepting (round $round)"
+                low_escape=true
+                low_count=$esc_low
+                verdict="PASS"
+                break
+            fi
+        fi
+
         # 5. Dispatch security-fix phase
-        local findings_file
-        findings_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
-        printf '%s' "$latest_findings" > "$findings_file"
+        local temp_findings_file
+        temp_findings_file=$(mktemp "${TMPDIR:-/tmp}/autopilot-content-XXXXXX")
+        printf '%s' "$latest_findings" > "$temp_findings_file"
         local fix_prompt
-        fix_prompt="$(prompt_security_fix "$epic_num" "$title" "$repo_root" "$short_name" "$findings_file")"
-        rm -f "$findings_file"
+        fix_prompt="$(prompt_security_fix "$epic_num" "$title" "$repo_root" "$short_name" "$temp_findings_file")"
+        rm -f "$temp_findings_file"
         invoke_claude "security-fix" "$fix_prompt" "$epic_num" "$title" || {
             log WARN "Security fix invocation failed"
         }
         _accumulate_phase_cost "$repo_root"
+
+        # ── 5. Dispatch security-verify phase ───────────────────────
+        log INFO "Security verify (cycle $round/$max_rounds)"
+        local verify_prompt
+        verify_prompt="$(prompt_security_verify "$epic_num" "$title" "$repo_root" "$short_name" "$round" "$max_rounds")"
+        invoke_claude "security-verify" "$verify_prompt" "$epic_num" "$title" || {
+            log WARN "Security verify invocation failed"
+        }
+        _accumulate_phase_cost "$repo_root"
+
+        # 6. Parse verify verdict (tail -1 picks up verify's Verdict line)
+        verdict=$(grep -i '^Verdict:' "$findings_file" | tail -1 | awk '{print toupper($2)}')
+        verdict="${verdict:-UNKNOWN}"
+
+        if [[ "$verdict" == "PASS" ]]; then
+            log OK "Security verify: PASS — fixes confirmed (cycle $round)"
+            break
+        fi
+
+        log WARN "Security verify: issues remain — cycling back to review (cycle $round/$max_rounds)"
     done
 
     # 6. Write marker (orchestrator responsibility — NEVER the model)
@@ -121,7 +168,7 @@ SEOF
             if [[ "${SECURITY_FORCE_SKIP_ALLOWED:-false}" == "true" ]]; then
                 # Before force-skipping, check severity
                 local severities
-                severities=$(_classify_security_severity "$findings_file")
+                severities=$(_classify_security_severity_from_string "$latest_findings")
                 local crit high med low
                 read -r crit high med low <<< "$severities"
 
@@ -131,36 +178,45 @@ SEOF
                 elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "CRITICAL" ]] && (( crit > 0 )); then
                     log ERROR "CRITICAL security findings ($crit) — halting"
                     return 1
+                elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "MEDIUM" ]] && (( crit + high + med > 0 )); then
+                    log ERROR "MEDIUM+ security findings ($crit critical, $high high, $med medium) — halting"
+                    return 1
                 elif [[ "$SECURITY_MIN_SEVERITY_TO_HALT" == "LOW" ]] && (( crit + high + med + low > 0 )); then
                     log ERROR "Security findings present ($crit critical, $high high, $med medium, $low low) — halting (MIN_SEVERITY=LOW)"
                     return 1
                 fi
 
-                log WARN "Security gate: issues remain after $max_rounds rounds — force-advancing (--allow-security-skip)"
+                log WARN "Security gate: issues remain after $max_rounds cycles — force-advancing (--allow-security-skip)"
                 echo "" >> "$tasks_file"
                 echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
                 if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
                     echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
                 fi
                 (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
-                 git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip after ${max_rounds} rounds" 2>/dev/null || true)
+                 git commit -m "security-review(${epic_num}): force-advanced via --allow-security-skip after ${max_rounds} cycles" 2>/dev/null || true)
             else
-                log ERROR "Security gate: unresolved findings after $max_rounds rounds — halting pipeline"
+                log ERROR "Security gate: unresolved findings after $max_rounds cycles — halting pipeline"
                 log ERROR "Re-run with --allow-security-skip to force-advance past security failures"
                 echo "" >> "$tasks_file"
                 if ! grep -q '<!-- SECURITY_FORCE_SKIPPED -->' "$tasks_file" 2>/dev/null; then
                     echo "<!-- SECURITY_FORCE_SKIPPED -->" >> "$tasks_file"
                 fi
                 (cd "$repo_root" && git add "$tasks_file" "$findings_file" && \
-                 git commit -m "security-review(${epic_num}): halted — unresolved findings after ${max_rounds} rounds" 2>/dev/null || true)
+                 git commit -m "security-review(${epic_num}): halted — unresolved findings after ${max_rounds} cycles" 2>/dev/null || true)
                 return 1
             fi
         else
-            log OK "Security gate: passed"
+            if [[ "$low_escape" == "true" ]]; then
+                log OK "Security gate: passed (accepted LOW findings)"
+                local msg="security-review(${epic_num}): accepted (${low_count} LOW findings only)"
+            else
+                log OK "Security gate: passed"
+                local msg="security-review(${epic_num}): all checks passed"
+            fi
             echo "" >> "$tasks_file"
             echo "<!-- SECURITY_REVIEWED -->" >> "$tasks_file"
             (cd "$repo_root" && git add "$tasks_file" "$findings_file" 2>/dev/null && \
-             git commit -m "security-review(${epic_num}): all checks passed" 2>/dev/null || true)
+             git commit -m "$msg" 2>/dev/null || true)
         fi
     fi
 
