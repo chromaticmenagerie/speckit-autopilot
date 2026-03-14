@@ -832,7 +832,7 @@ PROHIBITED test file changes:
 ### Instructions
 1. Parse the CI output. Identify the FIRST failing step and root cause.
 2. Read relevant source files.
-3. Fix ONLY the CI failure — do NOT perform elective refactoring. Only make structural changes (package moves, function splits) if strictly necessary to resolve the CI failure.
+3. Fix ONLY the CI failure — do NOT perform elective refactoring, architectural improvements, style cleanup, or code changes unrelated to the failing CI step. Only make structural changes (package moves, function splits) if strictly necessary to resolve the CI failure.
 4. If a test legitimately fails, fix the IMPLEMENTATION, not the test.
 5. Common fixes:
    - Lint: unused imports/vars, formatting, type mismatches
@@ -866,6 +866,8 @@ If secret scanning (gitleaks) reported findings:
      justification comment above).
 - After fixing, ensure ALL modified/created config files are staged:
   git add .gitleaks.toml .gitleaksignore <other specific files>
+
+REMEMBER: Your scope is the FAILING CI STEP ONLY. Do not fix unrelated code, improve architecture, address deferred tasks, or make elective refactoring.
 EOF
 }
 
