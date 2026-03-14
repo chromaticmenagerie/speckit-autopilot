@@ -306,7 +306,7 @@ HAS_CODEX="$HAS_CODEX"
 CODEX_ENABLED="$CODEX_ENABLED"
 
 # CodeRabbit review max rounds per convergence loop.
-CODERABBIT_MAX_ROUNDS=3
+CODERABBIT_MAX_ROUNDS=2
 # REVIEW_TIER_ORDER=""    # Auto-detected. Override: cli,codex,self
 # CODEX_REVIEW_TIMEOUT=300
 # CODEX_MAX_DIFF_BYTES=800000

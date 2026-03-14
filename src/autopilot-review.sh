@@ -158,10 +158,10 @@ _tiered_review() {
                 # Per-tier max rounds (Decision #17)
                 local max_rounds
                 case "$tier" in
-                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-3}" ;;
-                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-3}" ;;
+                    cli)    max_rounds="${CODERABBIT_MAX_ROUNDS:-2}" ;;
+                    codex)  max_rounds="${CODEX_MAX_ROUNDS:-2}" ;;
                     self)   max_rounds="${CLAUDE_SELF_REVIEW_MAX_ROUNDS:-2}" ;;
-                    *)      max_rounds=3 ;;
+                    *)      max_rounds=2 ;;
                 esac
                 local loop_rc=0
                 _review_fix_loop "$repo_root" "$merge_target" "$epic_num" "$title" "$short_name" "$tier" "$max_rounds" "$events_log" "$TIER_OUTPUT" || loop_rc=$?
