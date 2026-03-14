@@ -1174,8 +1174,16 @@ Read the evidence file at $evidence_file. For each FR-NNN listed:
    - NOT_FOUND: No implementation found
    - DEFERRED: Task was marked [-] (intentionally deferred)
 
-Write your findings to $findings_file in this format:
-- FR-NNN: PASS|PARTIAL|NOT_FOUND|DEFERRED — brief explanation
+**APPEND** a new round section to $findings_file using the Write tool. The file already exists with a header — do NOT overwrite existing content, only APPEND.
+
+Start with this round header:
+
+\`\`\`markdown
+## Round $round ($round/$max_rounds)
+\`\`\`
+
+Then list each FR in this format:
+- FR-NNN: PASS|PARTIAL|NOT_FOUND|DEFERRED | files: path1, path2 — brief explanation
 
 If specs/${short_name}/plan.md exists, also read it for implementation approach context. spec.md has the 'what', plan.md has the 'how'.
 
@@ -1201,13 +1209,97 @@ For each failing FR:
 1. Read the spec at specs/$short_name/spec.md to understand the full requirement
 2. Read the tasks at specs/$short_name/tasks.md to find which task(s) cover this FR
 3. Implement the missing functionality
-4. Write tests for the new code
+4. Write tests using the project's existing test framework if available (e.g., tests/test-*.sh for bash).
+   If no test framework exists, create a verification script with explicit assertions
+   that exercises the fix and asserts expected behavior. Do not create orphaned test files —
+   ensure tests are discoverable by the project's test runner.
 5. Run tests to verify
-6. Commit your changes
+6. Commit your changes with explicit file staging:
+   git add <specific files you modified>
+   git commit -m "fix(${epic_num}): resolve FR requirement gaps"
+7. Verify clean working tree:
+   git status
+   If uncommitted changes remain, stage and commit them.
 
 If specs/${short_name}/plan.md exists, also read it for implementation approach context. spec.md has the 'what', plan.md has the 'how'.
 
 Only fix the FRs listed above. Do not modify unrelated code.
+EOF
+}
+
+prompt_requirements_recheck() {
+    local epic_num="$1" title="$2" repo_root="$3" short_name="$4"
+    local recheck_file="$5" recheck_evidence="$6" findings_file="$7"
+    local failing_frs="$8" round="$9" max_rounds="${10}"
+
+    cat <<EOF
+$(_preamble "$epic_num" "$title" "$repo_root")
+
+# Requirements Recheck — Cycle ${round}/${max_rounds}
+
+You are independently verifying that failing requirements were correctly fixed.
+Your approach is DIFFERENT from verify-requirements — you focus on TEST ASSERTIONS
+and DIFF REVIEW, not code-grep evidence.
+
+The following FRs were PARTIAL or NOT_FOUND and have been fixed:
+  ${failing_frs}
+
+The fix diff is available at: ${recheck_evidence}
+The full findings from previous verification rounds are at: ${findings_file}
+Read this file to identify previously-PASS FRs for the regression spot-check in step 5.
+
+## Instructions
+
+For each failing FR:
+
+1. Read the FR's full text from specs/${short_name}/spec.md
+2. Read the fix diff at ${recheck_evidence} — understand WHAT was changed
+3. Find TEST FILES that exercise this FR:
+   - Primary: search for test files importing/testing the modified functions from the diff
+   - Secondary: search for test files referencing the FR number (FR-NNN) in comments
+   - If test file was created by the fix phase (appears in the diff as a new file),
+     verify it is discoverable by the project's test runner (not an orphaned file)
+   - If no tests found via either method, fall back to DIFF-WALKTHROUGH:
+     walk through the fix diff line-by-line against the FR's acceptance criteria,
+     checking boundary conditions and edge cases explicitly stated in the requirement.
+     Classify as VERIFIED only if the diff clearly satisfies ALL acceptance criteria;
+     otherwise classify as INCOMPLETE ("no test coverage, diff review inconclusive")
+4. Verify: does the test ASSERT the SPECIFIC acceptance criteria?
+   - Example: FR-008 says "budget check on largest variant only"
+     → does the test assert only ONE budget check runs, on the largest variant?
+   - Example: FR-014 says "pg:1 for animated GIFs"
+     → does the test verify the generated URL contains pg:1?
+   - A test that exercises adjacent behavior but doesn't assert the specific
+     requirement is INSUFFICIENT — classify as INCOMPLETE
+5. Check: did the fix introduce regressions?
+   - Check the files modified in the diff — if any appear in the \`| files:\` references
+     of previously-PASS FRs in ${findings_file}, verify those FRs are not regressed
+   - Limit to 2-3 spot-checks, prioritizing FRs with most file overlap with the fix
+   - Read those FRs from spec.md, check the relevant code still satisfies them
+   - If a regression is found, note it in your findings
+
+## Output
+
+Append your findings to ${recheck_file}:
+
+\`\`\`markdown
+### Recheck Cycle ${round}
+
+| FR | Status | Test File | Assertion Check | Regression Risk |
+|----|--------|-----------|-----------------|-----------------|
+| FR-NNN | VERIFIED/INCOMPLETE | path/to/test.ts | "asserts X" / "no test" | None / "FR-MMM may regress" |
+
+Verdict: PASS (if all VERIFIED and no regressions)
+Verdict: FAIL (if any INCOMPLETE or regression found)
+\`\`\`
+
+## Prohibitions
+
+- Do NOT modify source code (verification only)
+- Do NOT add HTML markers to tasks.md (orchestrator responsibility)
+- Do NOT commit any files
+- Do NOT overwrite existing content — only APPEND
+- Do NOT re-classify FRs beyond the failing list and 2-3 regression spot-checks
 EOF
 }
 

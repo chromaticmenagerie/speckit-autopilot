@@ -14,7 +14,7 @@ BLUE='\033[0;34m'; CYAN='\033[0;36m'
 BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 # ─── Constants & Globals ─────────────────────────────────────────────────────
-PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements security-review security-verify verify-ci review merge crystallize)
+PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements requirements-recheck security-review security-verify verify-ci review merge crystallize)
 SPINNER_CHARS=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 POLL_INTERVAL=1; MIN_COLS=40; MIN_ROWS=24
 REPO_ROOT=""; STATUS_FILE=""; EVENTS_FILE=""
@@ -56,6 +56,7 @@ short_phase() {
         analyze-verify)  echo "analyze-v" ;;
         design-read)     echo "design" ;;
         verify-requirements) echo "verify-req" ;;
+        requirements-recheck) echo "req-rchk" ;;
         security-review) echo "sec-review" ;;
         verify-ci)       echo "verify-ci" ;;
         crystallize)     echo "crystal." ;;
