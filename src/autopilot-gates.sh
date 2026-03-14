@@ -267,6 +267,7 @@ _run_verify_ci_gate() {
 
     log PHASE "Verify-CI gate (max $max_rounds rounds)"
     CI_FIX_WARNINGS=""
+    local prev_ci_output=""
 
     while [[ $round -lt $max_rounds ]]; do
         round=$((round + 1))
@@ -279,6 +280,22 @@ _run_verify_ci_gate() {
         fi
 
         log WARN "CI failed (round $round/$max_rounds)"
+
+        # Same-failure early halt: if CI output identical to previous round
+        # and no test modifications were detected, stop wasting Claude invocations
+        if [[ -n "$prev_ci_output" ]] && [[ "$LAST_CI_OUTPUT" == "$prev_ci_output" ]] && [[ -z "${CI_FIX_TEST_WARN:-}" ]]; then
+            log WARN "CI output identical to previous round — no progress, halting early"
+            _emit_event "$events_log" "ci_fix_no_progress" \
+                "{\"round\":$round,\"detail\":\"CI output unchanged from round $((round-1))\"}"
+            if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+                echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+                echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+                (cd "$repo_root" && git add "$tasks_file" && \
+                 git commit -m "chore(${epic_num}): CI verification force-skipped (identical failure, round $round)" 2>/dev/null || true)
+            fi
+            break
+        fi
+
         [[ $round -ge $max_rounds ]] && break
 
         # Record HEAD before fix for test modification detection
@@ -322,6 +339,7 @@ _run_verify_ci_gate() {
             fi
         fi
         _accumulate_phase_cost "$repo_root"
+        prev_ci_output="$LAST_CI_OUTPUT"
     done
 
     # Always write marker and return 0 (like security gate pattern)
