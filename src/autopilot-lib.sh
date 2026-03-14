@@ -623,6 +623,10 @@ load_project_config() {
     HAS_FRONTEND="${HAS_FRONTEND:-false}"
     HAS_CODERABBIT="${HAS_CODERABBIT:-false}"
     HAS_CODEX="${HAS_CODEX:-false}"
+    CODEX_ENABLED="${CODEX_ENABLED:-${HAS_CODEX:-false}}"
+    if [[ "${HAS_CODEX:-false}" == "true" ]] && [[ "${CODEX_ENABLED:-false}" != "true" ]]; then
+        log INFO "Codex CLI detected but disabled (CODEX_ENABLED=false)"
+    fi
     HAS_REMOTE="${HAS_REMOTE:-false}"
     HAS_GH_CLI="${HAS_GH_CLI:-false}"
     PROJECT_LANG="${PROJECT_LANG:-unknown}"
@@ -675,7 +679,7 @@ load_project_config() {
     if [[ -z "$REVIEW_TIER_ORDER" ]]; then
         local tiers=""
         [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
-        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        [[ "${CODEX_ENABLED:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
         tiers="${tiers:+$tiers,}self"
         REVIEW_TIER_ORDER="$tiers"
     fi

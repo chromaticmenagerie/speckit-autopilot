@@ -405,12 +405,21 @@ HAS_CODEX=false
 rc=0; _tier_codex "/tmp" "main" || rc=$?
 assert_eq "2" "$rc" "HAS_CODEX=false → tier returns 2"
 
+# CODEX_ENABLED=false → _tier_codex returns 2 (disabled)
+HAS_CODEX=true
+CODEX_ENABLED=false
+rc=0; _tier_codex "/tmp" "main" || rc=$?
+assert_eq "2" "$rc" "HAS_CODEX=true CODEX_ENABLED=false → tier returns 2"
+
+# HAS_CODEX=false CODEX_ENABLED=true → _tier_codex returns 2 (no binary)
+HAS_CODEX=false
+CODEX_ENABLED=true
+rc=0; _tier_codex "/tmp" "main" || rc=$?
+assert_eq "2" "$rc" "HAS_CODEX=false CODEX_ENABLED=true → tier returns 2"
+
 # ─── Tests: Backward-compat config aliases ───────────────────────────────────
-
 echo "Test: Backward-compat config aliases"
-
-# Replicate alias logic from autopilot-lib.sh (lines 560-577) inline
-# to avoid sourcing autopilot-lib.sh which has heavy side effects.
+# Replicate alias logic from autopilot-lib.sh inline (avoid heavy side effects).
 
 # Test 1: SKIP_CODERABBIT=true → SKIP_REVIEW=true
 result=$(SKIP_CODERABBIT=true bash -c 'SKIP_REVIEW="${SKIP_REVIEW:-${SKIP_CODERABBIT:-false}}"; echo "$SKIP_REVIEW"')
@@ -431,40 +440,58 @@ result=$(
 )
 assert_eq "true,true" "$result" "FORCE_ADVANCE_ON_REVIEW_FAIL=true → STALL+ERROR=true"
 
-# Test 3: HAS_CODERABBIT=true HAS_CODEX=false → tier order = cli,self
+# Test 3: HAS_CODERABBIT=true CODEX_ENABLED=false → tier order = cli,self
 result=$(
     REVIEW_TIER_ORDER=""
     HAS_CODERABBIT=true
     HAS_CODEX=false
+    CODEX_ENABLED=false
     if [[ -z "$REVIEW_TIER_ORDER" ]]; then
         tiers=""
         [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
-        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        [[ "${CODEX_ENABLED:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
         tiers="${tiers:+$tiers,}self"
         REVIEW_TIER_ORDER="$tiers"
     fi
     echo "$REVIEW_TIER_ORDER"
 )
-assert_eq "cli,self" "$result" "HAS_CODERABBIT=true HAS_CODEX=false → cli,self"
+assert_eq "cli,self" "$result" "HAS_CODERABBIT=true CODEX_ENABLED=false → cli,self"
 
-# Test 4: HAS_CODERABBIT=false HAS_CODEX=true → tier order = codex,self
+# Test 4: HAS_CODERABBIT=false CODEX_ENABLED=true → tier order = codex,self
 result=$(
     REVIEW_TIER_ORDER=""
     HAS_CODERABBIT=false
     HAS_CODEX=true
+    CODEX_ENABLED=true
     if [[ -z "$REVIEW_TIER_ORDER" ]]; then
         tiers=""
         [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
-        [[ "${HAS_CODEX:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        [[ "${CODEX_ENABLED:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
         tiers="${tiers:+$tiers,}self"
         REVIEW_TIER_ORDER="$tiers"
     fi
     echo "$REVIEW_TIER_ORDER"
 )
-assert_eq "codex,self" "$result" "HAS_CODERABBIT=false HAS_CODEX=true → codex,self"
+assert_eq "codex,self" "$result" "HAS_CODERABBIT=false CODEX_ENABLED=true → codex,self"
+
+# Test 5: HAS_CODEX=true CODEX_ENABLED=false → tier order = self (codex excluded)
+result=$(
+    REVIEW_TIER_ORDER=""
+    HAS_CODERABBIT=false
+    HAS_CODEX=true
+    CODEX_ENABLED=false
+    if [[ -z "$REVIEW_TIER_ORDER" ]]; then
+        tiers=""
+        [[ "${HAS_CODERABBIT:-false}" == "true" ]] && tiers="cli"
+        [[ "${CODEX_ENABLED:-false}" == "true" ]] && tiers="${tiers:+$tiers,}codex"
+        tiers="${tiers:+$tiers,}self"
+        REVIEW_TIER_ORDER="$tiers"
+    fi
+    echo "$REVIEW_TIER_ORDER"
+)
+assert_eq "self" "$result" "HAS_CODEX=true CODEX_ENABLED=false → self only"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
-
 echo ""
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"
 if [[ $TESTS_FAILED -gt 0 ]]; then

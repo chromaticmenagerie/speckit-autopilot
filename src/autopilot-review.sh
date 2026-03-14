@@ -343,6 +343,11 @@ _tier_codex() {
         return 2
     fi
 
+    if [[ "${CODEX_ENABLED:-false}" != "true" ]]; then
+        log INFO "Codex review disabled (CODEX_ENABLED=false) — skipping tier"
+        return 2
+    fi
+
     # Initialize before trap (prevents set -u crash in trap handler if mktemp fails)
     local tmpfile="" stderr_file="" prompt_file="" diff_file=""
     local timeout_secs="${CODEX_REVIEW_TIMEOUT:-300}"
