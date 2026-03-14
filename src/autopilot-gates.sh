@@ -344,27 +344,29 @@ _run_verify_ci_gate() {
 
     # Always write marker and return 0 (like security gate pattern)
     echo "" >> "$tasks_file"
-    if $ci_passed; then
-        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
-        local commit_msg="chore(${epic_num}): CI verification passed"
-        [[ -n "$CI_FIX_WARNINGS" ]] && commit_msg="chore(${epic_num}): CI verification passed (test modifications detected)"
-        (cd "$repo_root" && git add "$tasks_file" && \
-         git commit -m "$commit_msg" 2>/dev/null || true)
-    else
-        # Tier 1 secrets override force-skip — always halt
-        if [[ "${LAST_SECRET_SCAN_TIER:-0}" -eq 1 ]]; then
-            log ERROR "Tier 1 provider secret detected — cannot force-skip. Rotate the secret and remove from git history."
-            return 1
-        fi
-        if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+    if ! grep -q '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file" 2>/dev/null; then
+        if $ci_passed; then
             echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
-            echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
-            log WARN "CI still failing after $max_rounds rounds — force-advancing"
+            local commit_msg="chore(${epic_num}): CI verification passed"
+            [[ -n "$CI_FIX_WARNINGS" ]] && commit_msg="chore(${epic_num}): CI verification passed (test modifications detected)"
             (cd "$repo_root" && git add "$tasks_file" && \
-             git commit -m "chore(${epic_num}): CI verification force-skipped after $max_rounds rounds" 2>/dev/null || true)
+             git commit -m "$commit_msg" 2>/dev/null || true)
         else
-            log ERROR "CI still failing after $max_rounds rounds — halting (CI_FORCE_SKIP_ALLOWED=false)"
-            return 1
+            # Tier 1 secrets override force-skip — always halt
+            if [[ "${LAST_SECRET_SCAN_TIER:-0}" -eq 1 ]]; then
+                log ERROR "Tier 1 provider secret detected — cannot force-skip. Rotate the secret and remove from git history."
+                return 1
+            fi
+            if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+                echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+                echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+                log WARN "CI still failing after $max_rounds rounds — force-advancing"
+                (cd "$repo_root" && git add "$tasks_file" && \
+                 git commit -m "chore(${epic_num}): CI verification force-skipped after $max_rounds rounds" 2>/dev/null || true)
+            else
+                log ERROR "CI still failing after $max_rounds rounds — halting (CI_FORCE_SKIP_ALLOWED=false)"
+                return 1
+            fi
         fi
     fi
     return 0

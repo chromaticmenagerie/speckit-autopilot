@@ -231,6 +231,63 @@ assert "CI_FORCE_SKIP_ALLOWED=false: no VERIFY_CI_COMPLETE marker" \
 assert "CI_FORCE_SKIP_ALLOWED=false: no VERIFY_CI_FORCE_SKIPPED marker" \
     "! grep -q '<!-- VERIFY_CI_FORCE_SKIPPED -->' '$tasks_file'"
 
+# --- Test: no duplicate markers after same-failure early halt ---
+echo ""
+echo -e "${BOLD}Functional: no duplicate markers after same-failure early halt${RESET}"
+
+setup_test
+prev_ci_output=""
+round=0
+max_rounds=3
+ci_passed=false
+halted_early=false
+tasks_file="$TMPD/specs/test-epic/tasks.md"
+events_log="$TMPD/.specify/logs/events.jsonl"
+CI_FORCE_SKIP_ALLOWED=true
+LAST_CI_OUTPUT="error: something broke"
+CI_FIX_TEST_WARN=""
+
+# Simulate the loop (mirrors _run_verify_ci_gate logic)
+while [[ $round -lt $max_rounds ]]; do
+    round=$((round + 1))
+    # verify_ci always fails
+    CI_FIX_TEST_WARN=""
+    if [[ -n "$prev_ci_output" ]] && [[ "$LAST_CI_OUTPUT" == "$prev_ci_output" ]] && [[ -z "${CI_FIX_TEST_WARN:-}" ]]; then
+        _emit_event "$events_log" "ci_fix_no_progress" \
+            "{\"round\":$round,\"detail\":\"CI output unchanged from round $((round-1))\"}"
+        if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+            echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+            echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+        fi
+        halted_early=true
+        break
+    fi
+    [[ $round -ge $max_rounds ]] && break
+    prev_ci_output="$LAST_CI_OUTPUT"
+done
+
+# Post-loop marker writing with grep guard (mirrors the fix)
+echo "" >> "$tasks_file"
+if ! grep -q '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file" 2>/dev/null; then
+    if $ci_passed; then
+        echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+    else
+        if [[ "${CI_FORCE_SKIP_ALLOWED:-true}" == "true" ]]; then
+            echo "<!-- VERIFY_CI_COMPLETE -->" >> "$tasks_file"
+            echo "<!-- VERIFY_CI_FORCE_SKIPPED -->" >> "$tasks_file"
+        fi
+    fi
+fi
+
+complete_count=$(grep -c '<!-- VERIFY_CI_COMPLETE -->' "$tasks_file")
+skipped_count=$(grep -c '<!-- VERIFY_CI_FORCE_SKIPPED -->' "$tasks_file")
+
+assert "VERIFY_CI_COMPLETE marker appears exactly once" \
+    "[[ $complete_count -eq 1 ]]"
+
+assert "VERIFY_CI_FORCE_SKIPPED marker appears exactly once" \
+    "[[ $skipped_count -eq 1 ]]"
+
 # ─── Summary ────────────────────────────────────────────────────────────
 
 echo ""
