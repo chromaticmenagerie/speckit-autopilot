@@ -73,7 +73,7 @@ phases_line=$(grep '^PHASES=' "$WATCH_FILE")
 [[ -n "$phases_line" ]] && pass "PHASES array defined in watch" || fail "PHASES array defined in watch"
 
 # Check ordering: security-review then security-verify then verify-ci
-if echo "$phases_line" | grep -q 'security-review security-verify verify-ci'; then
+if echo "$phases_line" | grep -q 'security-review security-fix security-verify verify-ci'; then
     pass "security-verify between security-review and verify-ci in PHASES"
 else
     fail "security-verify between security-review and verify-ci in PHASES"

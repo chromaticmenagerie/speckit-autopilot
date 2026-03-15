@@ -14,7 +14,7 @@ BLUE='\033[0;34m'; CYAN='\033[0;36m'
 BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 # ─── Constants & Globals ─────────────────────────────────────────────────────
-PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements requirements-recheck security-review security-verify verify-ci review merge crystallize)
+PHASES=(specify clarify clarify-verify plan design-read tasks analyze analyze-verify implement verify-requirements requirements-fix requirements-recheck security-review security-fix security-verify verify-ci verify-ci-fix review self-review review-fix rebase-fix conflict-resolve finalize-fix finalize-review crystallize)
 SPINNER_CHARS=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 POLL_INTERVAL=1; MIN_COLS=40; MIN_ROWS=24
 REPO_ROOT=""; STATUS_FILE=""; EVENTS_FILE=""
@@ -59,6 +59,14 @@ short_phase() {
         requirements-recheck) echo "req-rchk" ;;
         security-review) echo "sec-review" ;;
         verify-ci)       echo "verify-ci" ;;
+        security-verify)      echo "sec-verify" ;;
+        finalize-fix)         echo "final-fix" ;;
+        finalize-review)      echo "final-rev" ;;
+        requirements-fix)     echo "req-fix" ;;
+        security-fix)         echo "sec-fix" ;;
+        self-review)          echo "self-rev" ;;
+        verify-ci-fix)        echo "ci-fix" ;;
+        conflict-resolve)     echo "conflict-r" ;;
         crystallize)     echo "crystal." ;;
         *)               echo "$1" ;;
     esac
