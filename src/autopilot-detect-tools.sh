@@ -166,8 +166,8 @@ detect_gh_cli() {
 detect_gitleaks() {
     if command -v gitleaks >/dev/null 2>&1; then
         PROJECT_SECRET_SCAN_CMD="gitleaks"
-        log INFO "Detected gitleaks — secret scanning enabled"
-        log INFO "Tip: Add gitleaks pre-commit hook for local protection: https://github.com/gitleaks/gitleaks#pre-commit"
+        echo "[INFO] Detected gitleaks — secret scanning enabled" >&2
+        echo "[INFO] Tip: Add gitleaks pre-commit hook for local protection: https://github.com/gitleaks/gitleaks#pre-commit" >&2
     fi
 }
 
@@ -202,7 +202,7 @@ useDefault = true
     '''ghp_0{6,}''',
   ]
 GLTOML
-    log INFO "Generated .gitleaks.toml (review and commit)"
+    echo "[INFO] Generated .gitleaks.toml (review and commit)" >&2
 }
 
 # ─── Patch-mode helpers ─────────────────────────────────────────────────────

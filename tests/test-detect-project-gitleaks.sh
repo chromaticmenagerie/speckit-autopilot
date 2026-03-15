@@ -38,7 +38,7 @@ echo "=== Gitleaks detection tests ==="
 # Test 1: No gitleaks → PROJECT_SECRET_SCAN_CMD stays empty
 echo "Test 1: No gitleaks in PATH → not detected"
 # Ensure gitleaks is not in PATH for this test
-CLEAN_PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$TMPDIR_ROOT" | tr '\n' ':')
+CLEAN_PATH="/usr/bin:/bin"
 PROJECT_SECRET_SCAN_CMD=""
 (PATH="$CLEAN_PATH" detect_gitleaks)
 # Note: detect_gitleaks sets the var in its own scope when run in subshell
